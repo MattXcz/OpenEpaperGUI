@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenEPaper GUI — Visual drawcustom editor</title>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖥️</text></svg>" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">EP</span>
+        <div>
+          <h1>OpenEPaper GUI</h1>
+          <p>Visual <code>drawcustom</code> builder for Home Assistant</p>
+        </div>
+      </div>
+
+      <div class="topbar-center">
+        <input id="project-name" class="project-name" type="text" value="Untitled" aria-label="Project name" />
+        <span id="save-state" class="save-state">saved</span>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="btn-projects" class="btn btn-ghost" title="Projects">📁 Projects</button>
+        <button id="btn-settings" class="btn btn-ghost" title="Settings">⚙️ Settings</button>
+        <button id="btn-export" class="btn btn-ghost" title="Export">⬇️ Export</button>
+        <button id="btn-push" class="btn btn-primary" title="Send to display">📤 Send to display</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <!-- Left: element palette -->
+      <aside class="panel panel-left">
+        <div class="panel-header">
+          <h2>Elements</h2>
+        </div>
+        <div class="panel-body">
+          <input id="palette-search" class="input" type="search" placeholder="Search elements…" />
+          <div id="palette" class="palette"></div>
+        </div>
+      </aside>
+
+      <!-- Center: canvas -->
+      <section class="canvas-area">
+        <div class="canvas-toolbar">
+          <div class="toolbar-group">
+            <label class="field-inline">
+              <span>Display</span>
+              <select id="display-preset" class="input input-sm"></select>
+            </label>
+            <label class="field-inline">
+              <span>W</span>
+              <input id="display-width" class="input input-sm input-num" type="number" min="16" max="2000" />
+            </label>
+            <label class="field-inline">
+              <span>H</span>
+              <input id="display-height" class="input input-sm input-num" type="number" min="16" max="2000" />
+            </label>
+            <label class="field-inline">
+              <span>BG</span>
+              <select id="display-background" class="input input-sm">
+                <option value="white">white</option>
+                <option value="black">black</option>
+              </select>
+            </label>
+          </div>
+          <div class="toolbar-group">
+            <label class="field-inline">
+              <span>Zoom</span>
+              <input id="zoom" class="input input-sm input-num" type="number" min="25" max="400" step="25" value="100" />
+              <span class="muted">%</span>
+            </label>
+            <button id="btn-grid" class="btn btn-ghost btn-sm" title="Toggle grid">▦ Grid</button>
+            <button id="btn-snap" class="btn btn-ghost btn-sm" title="Toggle snapping">🧲 Snap</button>
+            <button id="btn-preview" class="btn btn-ghost btn-sm" title="Toggle preview">👁 Preview</button>
+          </div>
+        </div>
+
+        <div class="canvas-scroll" id="canvas-scroll">
+          <div class="canvas-stage" id="canvas-stage">
+            <div class="canvas" id="canvas">
+              <div class="canvas-grid" id="canvas-grid"></div>
+              <div class="canvas-elements" id="canvas-elements"></div>
+              <div class="canvas-overlay" id="canvas-overlay"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="canvas-status">
+          <span id="status-hint">Drag an element from the left onto the canvas.</span>
+          <span id="status-coords" class="muted"></span>
+        </div>
+      </section>
+
+      <!-- Right: inspector -->
+      <aside class="panel panel-right">
+        <div class="panel-tabs">
+          <button class="tab is-active" data-tab="inspector">Inspector</button>
+          <button class="tab" data-tab="layers">Layers</button>
+          <button class="tab" data-tab="variables">Variables</button>
+          <button class="tab" data-tab="code">Code</button>
+        </div>
+
+        <div class="panel-body">
+          <div class="tab-panel is-active" data-panel="inspector">
+            <div id="inspector-empty" class="empty-state">
+              <p>No element selected.</p>
+              <p class="muted">Select an element on the canvas to edit its properties.</p>
+            </div>
+            <div id="inspector"></div>
+          </div>
+
+          <div class="tab-panel" data-panel="layers">
+            <div id="layers" class="layers"></div>
+          </div>
+
+          <div class="tab-panel" data-panel="variables">
+            <p class="muted small">
+              Variables are emitted as <code>{% set name = value %}</code> at the top of the
+              template. Use them in any field, e.g. <code>{{ spacing }}</code>.
+            </p>
+            <div id="variables" class="variables"></div>
+            <button id="btn-add-variable" class="btn btn-ghost btn-block">+ Add variable</button>
+          </div>
+
+          <div class="tab-panel" data-panel="code">
+            <div class="code-toolbar">
+              <button class="btn btn-ghost btn-sm" data-copy="template">Copy template</button>
+              <button class="btn btn-ghost btn-sm" data-copy="yaml">Copy YAML</button>
+              <button class="btn btn-ghost btn-sm" data-copy="payload">Copy JSON</button>
+            </div>
+            <div class="code-switch">
+              <button class="chip is-active" data-code="template">Jinja</button>
+              <button class="chip" data-code="yaml">YAML</button>
+              <button class="chip" data-code="payload">JSON</button>
+            </div>
+            <pre id="code-output" class="code-output"></pre>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Modals -->
+  <div id="modal-root" class="modal-root" hidden></div>
+  <div id="toast-root" class="toast-root"></div>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

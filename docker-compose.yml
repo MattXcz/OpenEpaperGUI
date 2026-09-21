@@ -1,0 +1,28 @@
+services:
+  epaper-gui:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: epaper-gui
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8099}:8000"
+    environment:
+      # --- Home Assistant connection (optional, can also be set in the UI) ---
+      HA_URL: "${HA_URL:-http://homeassistant.local:8123}"
+      HA_TOKEN: "${HA_TOKEN:-}"
+      # --- Storage ---
+      DATA_DIR: "/data"
+      # --- Misc ---
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    volumes:
+      - epaper-gui-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  epaper-gui-data:
