@@ -6,6 +6,9 @@ payloads for the [OpenEPaperLink](https://github.com/OpenEPaperLink/Home_Assista
 Home Assistant integration — a visual builder for e-paper displays, similar in
 spirit to Elementor.
 
+<img width="1908" height="959" alt="image" src="https://github.com/user-attachments/assets/3ab1cb37-3794-499a-8b2e-dc1c93c259f8" />
+
+
 You design a layout on a pixel-accurate canvas, and the app emits the Jinja
 template that Home Assistant expects. No YAML or Jinja is written by hand.
 
