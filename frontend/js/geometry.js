@@ -6,9 +6,108 @@ import { typeSpec } from './state.js';
 const CHAR_WIDTH = 0.58;   // monospace-ish advance per font-size unit
 const LINE_HEIGHT = 1.25;
 
+/**
+ * Builds the variable context used to preview Jinja expressions.
+ * Only literals declared in the project's Variables tab are known; entity
+ * states obviously are not, so those stay unresolved.
+ */
+export function buildPreviewContext(project, extra = {}) {
+  const ctx = { ...extra };
+  for (const variable of project?.variables || []) {
+    const name = String(variable.name || '').trim();
+    if (!name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
+    const raw = String(variable.value ?? '').trim();
+    if (raw === '') continue;
+    if (/^-?\d+(\.\d+)?$/.test(raw)) {
+      ctx[name] = Number(raw);
+    } else if (/^\[.*\]$/.test(raw)) {
+      // A list of plain numbers, e.g. [offset_0, offset_1, ...] is not usable,
+      // but [110, 130, 150] is.
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) ctx[name] = parsed;
+      } catch { /* leave unresolved */ }
+    }
+  }
+  return ctx;
+}
+
+/**
+ * Evaluates a restricted arithmetic expression. Returns null when the
+ * expression references anything we cannot resolve (entity states, filters…).
+ */
+export function evalExpression(expr, ctx) {
+  const source = String(expr).trim();
+
+  // Number / simple literal.
+  if (/^-?\d+(\.\d+)?$/.test(source)) return Number(source);
+
+  // `offsets[i]` style lookups into a known list.
+  const lookup = source.match(/^([A-Za-z_][A-Za-z0-9_]*)\[([A-Za-z0-9_]+)\]$/);
+  if (lookup) {
+    const list = ctx[lookup[1]];
+    const index = ctx[lookup[2]];
+    if (Array.isArray(list) && Number.isInteger(index) && index >= 0 && index < list.length) {
+      const value = list[index];
+      return typeof value === 'number' ? value : null;
+    }
+    return null;
+  }
+
+  // Only arithmetic over known numeric-ish identifiers is supported. Anything
+  // containing a function call, filter, string literal or unknown name bails out.
+  if (/['"()[\]{}|]/.test(source)) return null;
+
+  const identifiers = source.match(/[A-Za-z_][A-Za-z0-9_]*/g) || [];
+  for (const name of identifiers) {
+    if (!(name in ctx)) return null;
+    if (typeof ctx[name] !== 'number') return null;
+  }
+  if (!/^[\d\s+\-*/%().A-Za-z_]+$/.test(source)) return null;
+
+  try {
+    // Safe here: identifiers are all validated numbers and punctuation is arithmetic.
+    // eslint-disable-next-line no-new-func
+    const value = Function(...identifiers, `"use strict"; return (${source});`)(...identifiers.map((n) => ctx[n]));
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves every string property that is a `{{ … }}` expression into a plain
+ * value when possible. Unresolvable properties are kept as-is.
+ */
+export function resolveProps(props, ctx) {
+  const out = {};
+  for (const [key, value] of Object.entries(props || {})) {
+    if (typeof value !== 'string' || !value.includes('{{')) {
+      out[key] = value;
+      continue;
+    }
+    const whole = value.match(/^\s*\{\{\s*(.+?)\s*\}\}\s*$/s);
+    if (whole) {
+      const resolved = evalExpression(whole[1], ctx);
+      out[key] = resolved === null ? value : resolved;
+      continue;
+    }
+    // Mixed text with embedded expressions: substitute the ones we can.
+    out[key] = value.replace(/\{\{\s*(.+?)\s*\}\}/g, (match, expr) => {
+      const resolved = evalExpression(expr, ctx);
+      return resolved === null ? match : String(resolved);
+    });
+  }
+  return out;
+}
+
 function num(value, fallback = 0) {
   const parsed = typeof value === 'number' ? value : parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function propsOf(node) {
+  return node.__resolvedProps || node.props || {};
 }
 
 function textSize(text, size) {
@@ -27,7 +126,7 @@ export function boundsOf(node) {
   if (!node || node.kind === 'group') return null;
   const spec = typeSpec(node.type);
   if (!spec) return { x: 0, y: 0, w: 20, h: 20 };
-  const p = node.props || {};
+  const p = propsOf(node);
   const g = spec.geometry || {};
 
   switch (g.kind) {

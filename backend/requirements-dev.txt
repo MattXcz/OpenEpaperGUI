@@ -1,0 +1,5 @@
+# Test-only dependencies.
+# The generator itself emits Jinja text; these are needed to render it and
+# assert the result is valid JSON.
+-r requirements.txt
+jinja2>=3.1,<4.0
