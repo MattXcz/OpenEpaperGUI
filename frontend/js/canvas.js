@@ -3,7 +3,7 @@
 import {
   state, setState, createElement, createGroup, findNode, removeNode, emit, typeSpec,
 } from './state.js';
-import { boundsOf, applyBounds, snapValue } from './geometry.js';
+import { boundsOf, applyBounds, snapValue, buildPreviewContext, resolveProps } from './geometry.js';
 import { renderElementContent, elementLabel } from './renderer.js';
 
 let canvasEl;
@@ -139,6 +139,13 @@ export function render() {
   elementsEl.innerHTML = '';
   overlayEl.innerHTML = '';
 
+  // Drop stale preview values so edits to props are always reflected.
+  for (const node of flatten(project.nodes)) {
+    delete node.__display;
+    delete node.__approximate;
+    if (node.kind !== 'group') delete node.__resolvedProps;
+  }
+
   computePreviewLayout(project);
 
   const flat = flatten(project.nodes);
@@ -172,37 +179,50 @@ function isDynamic(value) {
 }
 
 /**
- * Coordinates that are Jinja expressions (e.g. `{{ 15 + i*spacing }}`) cannot be
- * resolved at design time, so every such element would otherwise collapse onto
- * the origin. Lay those children out in a readable stack instead and mark them
- * as approximate.
+ * Preview of loop contents. Home Assistant renders the real thing; here we
+ * evaluate every `{{ … }}` coordinate we can with the loop variable pinned to
+ * its first iteration, so a repeat group looks like its first column instead of
+ * collapsing onto the origin.
+ *
+ * Anything that still cannot be resolved (entity states, filters) is marked
+ * approximate: it stays selectable and editable, but is not draggable because
+ * Home Assistant owns its final position.
  */
 function computePreviewLayout(project) {
+  const baseCtx = buildPreviewContext(project);
+
   for (const node of project.nodes) {
     if (node.kind !== 'group') continue;
-    const children = (node.children || []).filter((c) => c.kind !== 'group');
-    const dynamicChildren = children.filter((child) => childHasDynamicGeometry(child));
-    if (!dynamicChildren.length) continue;
 
-    let cursorY = 0;
-    let cursorX = 0;
-    let widest = 0;
+    const repeatVar = node.repeat?.var || 'i';
+    const ctx = { ...baseCtx, [repeatVar]: 0 };
 
-    for (const child of dynamicChildren) {
-      const box = boundsOf(child);
-      child.__display = { x: cursorX, y: cursorY, w: box.w, h: box.h, approximate: true };
-      widest = Math.max(widest, box.w);
-      cursorY += Math.max(box.h, 12) + 6;
+    // `{% set %}` statements run before the loop body.
+    for (const statement of node.repeat?.pre || []) {
+      const match = String(statement).match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/);
+      if (!match) continue;
+      const [, name, expr] = match;
+      try {
+        const parsed = JSON.parse(expr);
+        if (Array.isArray(parsed)) ctx[name] = parsed;
+      } catch { /* not a literal list */ }
     }
-    node.__previewBox = { x: 0, y: 0, w: Math.max(widest, 40), h: Math.max(cursorY - 6, 20) };
+
+    node.__resolvedGroup = true;
+    for (const child of node.children || []) {
+      if (child.kind === 'group') continue;
+      child.__resolvedProps = resolveProps(child.props, ctx);
+      child.__display = null;
+      child.__approximate = childHasUnresolvedGeometry(child);
+    }
   }
 }
 
-function childHasDynamicGeometry(node) {
+function childHasUnresolvedGeometry(node) {
   const spec = typeSpec(node.type);
   if (!spec) return false;
   const g = spec.geometry || {};
-  const p = node.props || {};
+  const p = node.__resolvedProps || node.props || {};
   const keys = [g.x, g.y, g.radius, g.x_start, g.y_start, g.x_end, g.y_end].filter(Boolean);
   return keys.some((key) => isDynamic(p[key]));
 }
@@ -227,12 +247,13 @@ function buildElementNode(node, index) {
     wrapper.style.cssText += `left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;`;
     const hidden = node.props?.visible === false;
     if (hidden) wrapper.classList.add('is-hidden-el');
-    if (box.approximate) wrapper.classList.add('is-approximate');
+    const approximate = node.__approximate;
+    if (approximate) wrapper.classList.add('is-approximate');
     wrapper.innerHTML = `
       <div class="el-content">${renderElementContent(node)}</div>
       <div class="el-box"></div>
-      <div class="el-label">${escapeHtml(elementLabel(node))}${box.approximate ? ' · dynamic' : ''}</div>
-      ${box.approximate ? '' : '<div class="el-handle" data-handle="se"></div><div class="el-handle" data-handle="e"></div><div class="el-handle" data-handle="s"></div>'}
+      <div class="el-label">${escapeHtml(elementLabel(node))}${approximate ? ' · dynamic' : ''}</div>
+      ${approximate ? '' : '<div class="el-handle" data-handle="se"></div><div class="el-handle" data-handle="e"></div><div class="el-handle" data-handle="s"></div>'}
     `;
   }
 
@@ -240,8 +261,8 @@ function buildElementNode(node, index) {
 
   wrapper.addEventListener('mousedown', (event) => {
     event.stopPropagation();
-    // Elements positioned by Jinja cannot be dragged meaningfully.
-    if (node.__display?.approximate) {
+    // Elements positioned by Jinja that we could not evaluate cannot be dragged.
+    if (node.__approximate) {
       setState({ selection: node.id });
       render();
       return;
@@ -257,7 +278,6 @@ function buildElementNode(node, index) {
 }
 
 function groupBounds(group) {
-  if (group.__previewBox) return group.__previewBox;
   const boxes = (group.children || [])
     .map((child) => child.__display || boundsOf(child))
     .filter(Boolean);
@@ -297,10 +317,10 @@ function startDrag(event, node, mode) {
 function collectTargets(node) {
   if (node.kind === 'group') {
     return (node.children || []).filter(
-      (child) => child.kind !== 'group' && !child.__display?.approximate,
+      (child) => child.kind !== 'group' && !child.__approximate,
     );
   }
-  return node.__display?.approximate ? [] : [node];
+  return node.__approximate ? [] : [node];
 }
 
 function onDragMove(event) {

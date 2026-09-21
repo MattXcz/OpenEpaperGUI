@@ -84,7 +84,9 @@ function iconName(value) {
 export function renderElementContent(node) {
   const spec = typeSpec(node.type);
   if (!spec) return '<div class="el-placeholder">?</div>';
-  const p = node.props || {};
+  // `__resolvedProps` holds the preview values (loop variable pinned to its
+  // first iteration); fall back to the raw props for static elements.
+  const p = node.__resolvedProps || node.props || {};
   const g = spec.geometry || {};
 
   switch (node.type) {

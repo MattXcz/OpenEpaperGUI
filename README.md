@@ -9,6 +9,8 @@ spirit to Elementor.
 You design a layout on a pixel-accurate canvas, and the app emits the Jinja
 template that Home Assistant expects. No YAML or Jinja is written by hand.
 
+![Editor overview](docs/screenshots/01-editor-overview.png)
+
 ```jinja
 {% set spacing = 49 %}
 
@@ -243,6 +245,7 @@ and the generator. Adding a new draw type means adding one entry there.
 
 ```bash
 cd backend
+pip install -r requirements-dev.txt
 python -m app.test_generator
 ```
 
