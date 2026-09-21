@@ -44,9 +44,10 @@ html, body {
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
+  min-width: 0;
 }
 
-.brand { display: flex; align-items: center; gap: 10px; min-width: 240px; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 0 1 auto; }
 .brand-mark {
   display: grid;
   place-items: center;
@@ -61,7 +62,14 @@ html, body {
 .brand p { margin: 0; font-size: 11px; color: var(--text-faint); }
 .brand code { font-family: var(--mono); font-size: 10px; }
 
-.topbar-center { flex: 1; display: flex; align-items: center; gap: 10px; justify-content: center; }
+.topbar-center {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+  min-width: 0;
+}
 .project-name {
   background: transparent;
   border: 1px solid transparent;
@@ -72,14 +80,17 @@ html, body {
   padding: 6px 10px;
   text-align: center;
   width: 260px;
+  max-width: 100%;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 .project-name:hover { border-color: var(--border); }
 .project-name:focus { outline: none; border-color: var(--accent); background: var(--bg-elev-2); }
-.save-state { font-size: 11px; color: var(--text-faint); min-width: 60px; }
+.save-state { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
 .save-state.is-dirty { color: var(--warning); }
 .save-state.is-saved { color: var(--success); }
 
-.topbar-actions { display: flex; gap: 8px; }
+.topbar-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 
 /* ---------------------------------------------------------------- buttons */
 
@@ -112,7 +123,7 @@ html, body {
 
 /* ---------------------------------------------------------------- layout */
 
-.workspace { flex: 1; display: flex; min-height: 0; }
+.workspace { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
 
 .panel {
   background: var(--bg-elev);
@@ -512,8 +523,23 @@ code { font-family: var(--mono); background: var(--bg-elev-2); padding: 1px 4px;
 ::-webkit-scrollbar-thumb { background: #333a47; border-radius: 6px; border: 2px solid var(--bg-elev); }
 ::-webkit-scrollbar-thumb:hover { background: #444d5e; }
 
-@media (max-width: 1100px) {
-  .panel-left { width: 190px; }
-  .panel-right { width: 290px; }
+@media (max-width: 1400px) {
+  .panel-left { width: 200px; }
+  .panel-right { width: 300px; }
+}
+
+@media (max-width: 1200px) {
   .brand p { display: none; }
+  .project-name { width: 170px; }
+  .save-state { display: none; }
+  /* Collapse button labels to icons so the top bar never overflows. */
+  .topbar-actions .btn { font-size: 0; padding: 7px 10px; }
+  .topbar-actions .btn::first-letter { font-size: 14px; }
+  .topbar-actions .btn { letter-spacing: 0; }
+}
+
+@media (max-width: 1000px) {
+  .panel-left { width: 172px; }
+  .panel-right { width: 280px; }
+  .canvas-toolbar { gap: 8px; padding: 6px 10px; }
 }
