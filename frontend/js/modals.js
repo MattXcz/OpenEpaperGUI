@@ -111,8 +111,11 @@ export async function openProjects(onLoad) {
       const del = document.createElement('button');
       del.className = 'btn-icon';
       del.textContent = '🗑';
+      del.title = `Delete ${project.name}`;
+      del.setAttribute('aria-label', `Delete project ${project.name}`);
       del.addEventListener('click', async (event) => {
         event.stopPropagation();
+        if (!window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
         try {
           await api.deleteProject(project.id);
           item.remove();
@@ -168,7 +171,7 @@ export async function openSettings(onSaved) {
       <div class="field">
         <div class="field-label"><span>Long-lived access token</span></div>
         <input id="set-token" class="input" type="password" placeholder="${settings.hasToken ? '•••••••• (already set)' : 'paste token'}" />
-        <div class="field-help">Leave empty to keep the existing token. Can also be provided via the <code>HA_TOKEN</code> environment variable.</div>
+        <div class="field-help">Leave empty to keep the existing token. Changing the URL requires entering the token again. Can also be provided via the <code>HA_TOKEN</code> environment variable (used only with <code>HA_URL</code>).</div>
       </div>
       <div class="field">
         <div class="field-label"><span>Target device ID</span></div>
@@ -226,6 +229,11 @@ export async function openSettings(onSaved) {
     if (token) payload.haToken = token;
     const saved = await api.saveSettings(payload);
     setState({ settings: saved });
+    if (saved.tokenCleared) {
+      // The token is bound to the URL it was entered for (see storage.py).
+      toast('Home Assistant URL changed — please enter the token for the new URL', 'error');
+      document.getElementById('set-token').placeholder = 'paste token';
+    }
     return saved;
   }
 }
@@ -286,6 +294,134 @@ export function openExport() {
 }
 
 // ---------------------------------------------------------------------------
+// Pixel-accurate preview
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders the project with the real drawing code and shows the PNG.
+ *
+ * This is the honest counterpart to the canvas: same fonts, colours,
+ * coordinates and Pillow calls as the integration, so what is shown here is
+ * what the tag will draw.
+ */
+export async function openPixelPreview() {
+  let result = null;
+  let failure = null;
+
+  try {
+    result = await api.preview(state.project, state.previewAccent || 'red');
+  } catch (error) {
+    failure = error.message;
+  }
+
+  let zoom = 2;
+  let showGrid = false;
+
+  openModal('Pixel preview', (body) => {
+    if (failure) {
+      body.innerHTML = `<div class="preview-error">${escapeHtml(failure)}</div>`;
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'preview-wrap';
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'preview-toolbar';
+    toolbar.innerHTML = `
+      <span class="muted small">${result.width}×${result.height} · ${result.elements} element(s)</span>
+      <span class="preview-spacer"></span>
+      <label class="field-inline"><span>Accent</span>
+        <select id="preview-accent" class="input input-sm">
+          <option value="red">red</option>
+          <option value="yellow">yellow</option>
+        </select>
+      </label>
+      <label class="field-inline"><span>Zoom</span>
+        <input id="preview-zoom" class="input input-sm input-num" type="number" min="1" max="8" step="1" value="${zoom}" />
+      </label>
+      <button id="preview-checker" class="btn btn-ghost btn-sm">▦ Checkerboard</button>
+    `;
+    wrap.appendChild(toolbar);
+
+    const stage = document.createElement('div');
+    stage.className = 'preview-stage';
+
+    const img = document.createElement('img');
+    img.className = 'preview-image';
+    img.src = result.image;
+    img.alt = 'Rendered preview of the display';
+    stage.appendChild(img);
+    wrap.appendChild(stage);
+
+    const applyZoom = () => {
+      img.style.width = `${result.width * zoom}px`;
+      img.style.height = `${result.height * zoom}px`;
+      img.style.imageRendering = zoom >= 2 ? 'pixelated' : 'auto';
+    };
+    applyZoom();
+
+    const zoomInput = toolbar.querySelector('#preview-zoom');
+    zoomInput.addEventListener('input', () => {
+      zoom = Math.min(8, Math.max(1, Number(zoomInput.value) || 1));
+      applyZoom();
+    });
+
+    const accentSelect = toolbar.querySelector('#preview-accent');
+    accentSelect.value = state.previewAccent || 'red';
+    accentSelect.addEventListener('change', async () => {
+      setState({ previewAccent: accentSelect.value });
+      closeModal();
+      await openPixelPreview();
+    });
+
+    toolbar.querySelector('#preview-checker').addEventListener('click', (event) => {
+      showGrid = !showGrid;
+      stage.classList.toggle('is-checkered', showGrid);
+      event.target.classList.toggle('is-active', showGrid);
+    });
+
+    body.appendChild(wrap);
+
+    if (result.errors.length) {
+      body.appendChild(previewIssues('✕ Some elements could not be drawn', result.errors, 'is-error'));
+    }
+    if (result.notes.length) {
+      body.appendChild(previewIssues('ℹ Not shown in this preview', result.notes, 'is-note'));
+    }
+  }, (foot) => {
+    const download = document.createElement('button');
+    download.className = 'btn btn-ghost';
+    download.textContent = 'Download PNG';
+    download.addEventListener('click', () => {
+      if (!result) return;
+      const link = document.createElement('a');
+      link.href = result.image;
+      link.download = `${(state.project.name || 'epaper').replace(/\s+/g, '-').toLowerCase()}-preview.png`;
+      link.click();
+    });
+    foot.appendChild(download);
+  });
+}
+
+function previewIssues(title, items, className) {
+  const box = document.createElement('div');
+  box.className = `preview-issues ${className}`;
+  const heading = document.createElement('div');
+  heading.className = 'status-head';
+  heading.textContent = title;
+  box.appendChild(heading);
+  const list = document.createElement('ul');
+  for (const item of items) {
+    const li = document.createElement('li');
+    li.textContent = item;
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  return box;
+}
+
+// ---------------------------------------------------------------------------
 // Push to display
 // ---------------------------------------------------------------------------
 
@@ -300,11 +436,41 @@ export function openPush() {
         <div class="field-label"><span>Service</span></div>
         <input id="push-service" class="input" type="text" value="${escapeHtml(state.settings.service || 'open_epaper_link.drawcustom')}" />
       </div>
+      <div class="field-row">
+        <div class="field">
+          <div class="field-label"><span>Rotate</span></div>
+          <select id="push-rotate" class="input">
+            ${[0, 90, 180, 270].map((v) => `<option value="${v}"${state.project.rotate === v ? ' selected' : ''}>${v}°</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <div class="field-label"><span>Dither</span></div>
+          <select id="push-dither" class="input">
+            ${[[0, 'none'], [1, 'Floyd-Steinberg'], [2, 'ordered']].map(([v, label]) => `<option value="${v}"${state.project.dither === v ? ' selected' : ''}>${v} – ${label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <div class="field-label"><span>TTL (s)</span></div>
+          <input id="push-ttl" class="input" type="number" min="0" max="86400" value="${Number(state.project.ttl ?? 60)}" />
+        </div>
+      </div>
       <div class="field">
         <label class="checkbox-row"><input id="push-dry" type="checkbox" /> Dry run (render without sending)</label>
       </div>
-      <p class="muted small">The generated Jinja template is sent as the <code>payload</code> parameter.</p>
+      <p class="muted small">The generated Jinja template is sent as the <code>payload</code> parameter.
+        Rotate, dither and TTL are saved with the project.</p>
     `;
+    // The body is not in the document yet, so query it directly.
+    const saveOptions = () => {
+      const ttl = Math.round(Number(body.querySelector('#push-ttl').value));
+      state.project.rotate = Number(body.querySelector('#push-rotate').value);
+      state.project.dither = Number(body.querySelector('#push-dither').value);
+      state.project.ttl = Number.isFinite(ttl) ? Math.min(86400, Math.max(0, ttl)) : 60;
+      setState({ dirty: true }, 'change');
+    };
+    ['#push-rotate', '#push-dither', '#push-ttl'].forEach((selector) => {
+      body.querySelector(selector).addEventListener('change', saveOptions);
+    });
   }, (foot) => {
     const send = document.createElement('button');
     send.className = 'btn btn-primary';
@@ -313,6 +479,8 @@ export function openPush() {
       send.disabled = true;
       send.textContent = 'Sending…';
       try {
+        // Make sure a TTL that is still being typed is applied.
+        document.getElementById('push-ttl').dispatchEvent(new Event('change'));
         const result = await api.haPush({
           project: state.project,
           deviceId: document.getElementById('push-device').value.trim(),

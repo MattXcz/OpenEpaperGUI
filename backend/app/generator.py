@@ -14,8 +14,7 @@ drawing elements, e.g.::
         "color": "yellow"
       }
       {% for i in range(8) %}
-        ,
-        {
+        ,{
           "type": "text",
           "value": "{{ times[i] }}",
           "x": {{ 15 + i*spacing }},
@@ -35,9 +34,10 @@ when the group itself is the first item of the payload.
 That only works while we know, before rendering, how many items each node
 produces. Nodes that emit nothing (hidden elements, empty or zero-iteration
 groups) are dropped up front so they cannot leave a dangling comma behind. When
-an iteration count is itself a Jinja expression the item count is unknowable
+an iteration count is itself a Jinja expression, or groups are nested (where
+``loop.first`` only describes the innermost loop), the item count is not known
 here, so the template falls back to a runtime flag
-(``{% set ns = namespace(first=true) %}``) that every item checks and clears.
+(``{% set oepl_ns = namespace(first=true) %}``) that every item checks and clears.
 """
 
 from __future__ import annotations
@@ -46,15 +46,17 @@ import json
 import re
 from typing import Any
 
-from .schema import ELEMENT_TYPES_BY_NAME, INTERNAL_FIELDS, REQUIRED_FIELDS
+from .schema import ELEMENT_TYPES_BY_NAME, INTERNAL_FIELDS, emitted_always
 
 INDENT = "  "
 
 _INTEGER_RE = re.compile(r"-?\d+")
 _NUMERIC_RE = re.compile(r"-?\d+(?:\.\d+)?")
-_WHOLE_TAG_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}", re.S)
+# drawcustom accepts percentages for positions, e.g. `x: "50%"`.
+_PERCENT_RE = re.compile(r"-?\d+(?:\.\d+)?%")
+_WHOLE_TAG_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}", re.DOTALL)
 # Splits a string into literal chunks and whole Jinja tags (odd indexes).
-_JINJA_SEGMENT_RE = re.compile(r"(\{\{.*?\}\}|\{%.*?%\})", re.S)
+_JINJA_SEGMENT_RE = re.compile(r"(\{\{.*?\}\}|\{%.*?%\})", re.DOTALL)
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +87,10 @@ def _fmt_number(value: Any) -> str:
     if _NUMERIC_RE.fullmatch(text):
         # A numeric string, e.g. "42" typed into a number field.
         return text
+    if _PERCENT_RE.fullmatch(text):
+        # A relative position. It has to stay a JSON string: `{{ 50% }}` is a
+        # Jinja syntax error and a bare `50%` is invalid JSON.
+        return json.dumps(text)
     # A bare expression such as `spacing` or `15 + i*spacing`. Wrapping it is
     # what the user meant; emitting it raw would produce invalid JSON.
     return "{{ " + text + " }}"
@@ -128,7 +134,7 @@ def _fmt_plotdata(entries: Any) -> str:
             continue
         inner = []
         for key, value in entry.items():
-            if value in (None, ""):
+            if value is None or value == "":
                 continue
             if isinstance(value, bool):
                 inner.append(f'"{key}": {"true" if value else "false"}')
@@ -138,6 +144,44 @@ def _fmt_plotdata(entries: Any) -> str:
                 inner.append(f'"{key}": {_fmt_string(str(value))}')
         lines.append("{" + ", ".join(inner) + "}")
     return "[" + ", ".join(lines) + "]"
+
+
+def _object_items(field: dict, value: Any) -> list[tuple[dict, Any]] | None:
+    """Sub-properties of an `object` field (plot axes / legends) to emit.
+
+    `None` means the whole object is switched off and omitted. Home Assistant
+    treats an empty object as "off" as well, so when every sub-property equals
+    its default the field's `emit_key` is emitted anyway to keep it on.
+    """
+    if not isinstance(value, dict):
+        return None
+    items = []
+    for sub in field["fields"]:
+        raw = value.get(sub["key"], sub.get("default"))
+        if _same_as_default(raw, sub.get("default")):
+            continue
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            continue
+        items.append((sub, raw))
+    if not items:
+        key = field.get("emit_key")
+        sub = next((s for s in field["fields"] if s["key"] == key), None)
+        if sub is None or sub.get("default") is None:
+            return None
+        items.append((sub, value.get(key, sub["default"])))
+    return items
+
+
+def _fmt_object(field: dict, value: Any) -> str | None:
+    items = _object_items(field, value)
+    if items is None:
+        return None
+    parts = []
+    for sub, raw in items:
+        formatted = _fmt_value(sub, raw)
+        if formatted is not None:
+            parts.append(f'"{sub["key"]}": {formatted}')
+    return "{" + ", ".join(parts) + "}"
 
 
 def _fmt_value(field: dict, value: Any) -> str | None:
@@ -177,6 +221,9 @@ def _fmt_value(field: dict, value: Any) -> str | None:
             return None
         return _fmt_plotdata(value)
 
+    if kind == "object":
+        return _fmt_object(field, value)
+
     # text / textarea
     if value is None or value == "":
         return None
@@ -184,38 +231,71 @@ def _fmt_value(field: dict, value: Any) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Element emission
+# Which properties an element emits
 # ---------------------------------------------------------------------------
 
-def _element_lines(element: dict, indent: str) -> list[str]:
-    """Render one element as a list of JSON lines (without trailing comma)."""
+def _forced_fields(element_type: str, props: dict) -> set[str]:
+    """Optional fields that must be emitted for this particular element.
+
+    These mirror defaults in the OpenEPaperLink image generator that depend on
+    other properties, so "equal to the schema default" is not the same as
+    "equal to what Home Assistant would use".
+    """
+    forced: set[str] = set()
+    if element_type == "text":
+        # Without `anchor`, HA uses "la" for multi-line text and "lt" otherwise.
+        # Wrapping (`max_width`) can introduce line breaks at render time.
+        value = props.get("value")
+        max_width = props.get("max_width")
+        if (isinstance(value, str) and "\n" in value) or max_width not in (None, ""):
+            forced.add("anchor")
+    if element_type in ("rectangle", "rectangle_pattern"):
+        # HA rounds with radius 10 when `corners` is given without `radius`.
+        corners = props.get("corners")
+        spec = ELEMENT_TYPES_BY_NAME[element_type]
+        default = next((f["default"] for f in spec["fields"] if f["key"] == "corners"), None)
+        if corners not in (None, "") and corners != default:
+            forced.add("radius")
+    return forced
+
+
+def _emitted_fields(element: dict) -> list[tuple[dict, Any]] | None:
+    """(field, value) pairs an element emits, or None when it emits nothing."""
     element_type = element.get("type")
     spec = ELEMENT_TYPES_BY_NAME.get(element_type)
     if not spec:
-        return []
+        return None
 
     props = element.get("props") or {}
     if props.get("visible") is False:
-        return []
+        return None
 
-    required = REQUIRED_FIELDS.get(element_type, set())
-
-    pairs: list[tuple[str, str]] = [("type", _fmt_string(element_type))]
+    always = emitted_always(element_type) | _forced_fields(element_type, props)
+    out = []
     for field in spec["fields"]:
         key = field["key"]
         if key in INTERNAL_FIELDS or key == "type":
             continue
         raw = props.get(key, field.get("default"))
-        default = field.get("default")
-
         # Only emit optional properties when they differ from the default.
-        if key not in required and _same_as_default(raw, default):
+        if key not in always and _same_as_default(raw, field.get("default")):
             continue
+        out.append((field, raw))
+    return out
 
+
+def _element_lines(element: dict, indent: str) -> list[str]:
+    """Render one element as a list of JSON lines (without trailing comma)."""
+    fields = _emitted_fields(element)
+    if fields is None:
+        return []
+
+    pairs: list[tuple[str, str]] = [("type", _fmt_string(element["type"]))]
+    for field, raw in fields:
         formatted = _fmt_value(field, raw)
         if formatted is None:
             continue
-        pairs.append((key, formatted))
+        pairs.append((field["key"], formatted))
 
     lines = [indent + "{"]
     for index, (key, formatted) in enumerate(pairs):
@@ -240,22 +320,23 @@ def _same_as_default(value: Any, default: Any) -> bool:
     return False
 
 
-def _indent_block(lines: list[str], extra: str) -> list[str]:
-    return [extra + line if line.strip() else line for line in lines]
-
-
 # ---------------------------------------------------------------------------
 # Node emission
 # ---------------------------------------------------------------------------
 
 # Comma placement is decided statically whenever we know how many payload items
-# every node produces. A Jinja-driven iteration count breaks that, so the
-# template then switches to a runtime flag for the whole payload instead.
-GUARD_INIT = "{% set ns = namespace(first=true) %}"
-GUARD_PREFIX = "{% if not ns.first %},{% endif %}{% set ns.first = false %}"
+# every node produces. A Jinja-driven iteration count or nested groups break
+# that, so the template then switches to a runtime flag for the whole payload.
+# The name is prefixed so it cannot collide with a user's own `ns`.
+GUARD_INIT = "{% set oepl_ns = namespace(first=true) %}"
+GUARD_PREFIX = "{% if not oepl_ns.first %},{% endif %}{% set oepl_ns.first = false %}"
 
 # First item of the payload, emitted inside a loop: comma from iteration 2 on.
 LOOP_FIRST_PREFIX = "{% if not loop.first %},{% endif %}"
+
+
+def _is_group(node: dict) -> bool:
+    return node.get("kind") == "group"
 
 
 def _static_count(count: Any) -> int | None:
@@ -282,27 +363,35 @@ def _count_expr(count: Any) -> str:
     return match.group(1) if match else text
 
 
-def _emittable(children: list) -> list:
-    return [child for child in children if _element_lines(child, INDENT)]
-
-
 def _node_item_count(node: dict) -> int | None:
     """How many payload items a node produces, or None when only Jinja knows."""
-    if node.get("kind") != "group":
-        return 1 if _element_lines(node, INDENT) else 0
+    if not _is_group(node):
+        return 1 if _emitted_fields(node) is not None else 0
 
-    children = _emittable(node.get("children") or [])
-    if not children:
+    total = 0
+    for child in node.get("children") or []:
+        count = _node_item_count(child)
+        if count is None:
+            return None
+        total += count
+    if total == 0:
         return 0
 
     repeat = node.get("repeat") or {}
     if not repeat.get("enabled", True):
-        return len(children)
+        return total
 
     count = _static_count(repeat.get("count", 1))
     if count is None:
         return None
-    return max(0, count) * len(children)
+    return max(0, count) * total
+
+
+def _has_nested_groups(nodes: list) -> bool:
+    return any(
+        _is_group(node) and any(_is_group(child) for child in node.get("children") or [])
+        for node in nodes
+    ) or any(_has_nested_groups(node.get("children") or []) for node in nodes if _is_group(node))
 
 
 def _prefix(first: bool, seen: bool, guard: bool, in_loop: bool) -> str:
@@ -327,21 +416,35 @@ def _emit_element(element: dict, prefix: str, indent: str) -> list[str]:
     return body
 
 
+def _emit_children(children: list, first: bool, indent: str, guard: bool, in_loop: bool) -> list[str]:
+    out: list[str] = []
+    seen = False
+    for child in children:
+        # A child that emits nothing (hidden, unknown type, empty group) must
+        # not consume the "no comma yet" slot, or the next one emits a stray
+        # comma.
+        if _node_item_count(child) == 0:
+            continue
+        if _is_group(child):
+            # Nested groups always run with the runtime guard (see module doc),
+            # so `first` / `seen` no longer matter here.
+            block = _emit_group(child, first and not seen, indent, guard)
+        else:
+            block = _emit_element(child, _prefix(first, seen, guard, in_loop), indent)
+        if not block:
+            continue
+        seen = True
+        out.extend(block)
+    return out
+
+
 def _emit_group(group: dict, first: bool, indent: str, guard: bool) -> list[str]:
     children = group.get("children") or []
     repeat = group.get("repeat") or {}
 
     if not repeat.get("enabled", True):
         # Emit the children once, as plain elements.
-        out: list[str] = []
-        seen = False
-        for child in children:
-            block = _emit_element(child, _prefix(first, seen, guard, False), indent)
-            if not block:
-                continue
-            seen = True
-            out.extend(block)
-        return out
+        return _emit_children(children, first, indent, guard, in_loop=False)
 
     lines: list[str] = []
 
@@ -354,27 +457,16 @@ def _emit_group(group: dict, first: bool, indent: str, guard: bool) -> list[str]
             statement = "{% set " + statement + " %}"
         lines.append(indent + statement)
 
-    var = repeat.get("var") or "i"
+    var = str(repeat.get("var") or "i").strip() or "i"
     count = _count_expr(repeat.get("count", 1))
     lines.append(indent + "{% for " + var + " in range(" + count + ") %}")
-
-    body_indent = indent + INDENT
-    seen = False
-    for child in children:
-        # A child that emits nothing (hidden, unknown type) must not consume
-        # the "no comma yet" slot, or the next one emits a stray comma.
-        block = _emit_element(child, _prefix(first, seen, guard, True), body_indent)
-        if not block:
-            continue
-        seen = True
-        lines.extend(block)
-
+    lines.extend(_emit_children(children, first, indent + INDENT, guard, in_loop=True))
     lines.append(indent + "{% endfor %}")
     return lines
 
 
 def _emit_node(node: dict, first: bool, indent: str, guard: bool) -> list[str]:
-    if node.get("kind") == "group":
+    if _is_group(node):
         return _emit_group(node, first, indent, guard)
     return _emit_element(node, _prefix(first, False, guard, False), indent)
 
@@ -402,7 +494,8 @@ def generate_template(project: dict) -> str:
     counts = [_node_item_count(node) for node in nodes]
     # One unknown count anywhere makes static comma placement unsafe, because a
     # node that emits nothing at render time would leave a dangling comma.
-    guard = any(count is None for count in counts)
+    # Nested loops break `loop.first` the same way.
+    guard = any(count is None for count in counts) or _has_nested_groups(nodes)
     if guard:
         lines.append(GUARD_INIT)
 
@@ -412,7 +505,7 @@ def generate_template(project: dict) -> str:
     lines.append("[")
 
     emitted_any = False
-    for node, count in zip(nodes, counts):
+    for node, count in zip(nodes, counts, strict=True):
         if count == 0:
             continue  # emits nothing, so it must not affect comma placement
         block = _emit_node(node, not emitted_any, INDENT, guard)
@@ -425,6 +518,39 @@ def generate_template(project: dict) -> str:
     return "\n".join(lines)
 
 
+def collect_warnings(project: dict) -> list[str]:
+    """Things in the project the generator cannot express, or likely mistakes."""
+    warnings: list[str] = []
+
+    def check(node: dict, loop_vars: tuple[str, ...]) -> None:
+        if _is_group(node):
+            repeat = node.get("repeat") or {}
+            inner = loop_vars
+            if repeat.get("enabled", True):
+                var = str(repeat.get("var") or "i").strip() or "i"
+                if var in loop_vars:
+                    warnings.append(
+                        f"Group \"{node.get('name') or 'group'}\" reuses the loop variable "
+                        f"\"{var}\" of an enclosing group; the outer value is hidden inside it."
+                    )
+                inner = loop_vars + (var,)
+            for child in node.get("children") or []:
+                check(child, inner)
+        elif node.get("type") not in ELEMENT_TYPES_BY_NAME:
+            warnings.append(f"Unknown element type \"{node.get('type')}\" is skipped.")
+
+    for node in project.get("nodes") or []:
+        check(node, ())
+    return warnings
+
+
+def _static_value(field: dict, value: Any) -> Any:
+    if field["kind"] == "object":
+        items = _object_items(field, value)
+        return None if items is None else {sub["key"]: raw for sub, raw in items}
+    return value
+
+
 def generate_payload(project: dict) -> list[dict]:
     """Generate the *static* payload, ignoring repeat groups.
 
@@ -433,36 +559,28 @@ def generate_payload(project: dict) -> list[dict]:
     payload: list[dict] = []
 
     def emit(element: dict) -> None:
-        spec = ELEMENT_TYPES_BY_NAME.get(element.get("type"))
-        if not spec:
+        fields = _emitted_fields(element)
+        if fields is None:
             return
-        props = element.get("props") or {}
-        if props.get("visible") is False:
-            return
-        required = REQUIRED_FIELDS.get(element["type"], set())
         item: dict[str, Any] = {"type": element["type"]}
-        for field in spec["fields"]:
-            key = field["key"]
-            if key in INTERNAL_FIELDS or key == "type":
-                continue
-            value = props.get(key, field.get("default"))
-            if key not in required and _same_as_default(value, field.get("default")):
-                continue
+        for field, raw in fields:
+            value = _static_value(field, raw)
             if value is None or value == "":
                 continue
-            item[key] = value
+            item[field["key"]] = value
         payload.append(item)
 
-    for node in project.get("nodes") or []:
-        if node.get("kind") == "group":
-            repeat = node.get("repeat") or {}
-            if repeat.get("enabled", True):
-                continue  # dynamic, cannot be resolved statically
-            for child in node.get("children") or []:
-                emit(child)
-        else:
-            emit(node)
+    def walk(nodes: list) -> None:
+        for node in nodes:
+            if _is_group(node):
+                repeat = node.get("repeat") or {}
+                if repeat.get("enabled", True):
+                    continue  # dynamic, cannot be resolved statically
+                walk(node.get("children") or [])
+            else:
+                emit(node)
 
+    walk(project.get("nodes") or [])
     return payload
 
 
@@ -508,7 +626,6 @@ def _scalar(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return _fmt_number(value)
-    text = str(value)
-    if _is_template(text):
-        return text
-    return json.dumps(text, ensure_ascii=False)
+    # Always quote: a bare `{{ … }}` starts a YAML flow mapping, and values
+    # like `50%`, `yes` or `#fff` would change type or become comments.
+    return json.dumps(str(value), ensure_ascii=False)

@@ -2,4 +2,6 @@
 # The generator itself emits Jinja text; these are needed to render it and
 # assert the result is valid JSON.
 -r requirements.txt
-jinja2>=3.1,<4.0
+pyyaml>=6.0,<7.0
+pytest>=8.0,<9.0
+ruff>=0.8,<1.0
