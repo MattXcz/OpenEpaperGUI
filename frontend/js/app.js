@@ -16,6 +16,7 @@ import { initCode, scheduleGenerate } from './code.js';
 import {
   openProjects, openSettings, openExport, openPush, toast, closeModal,
 } from './modals.js';
+import { glyphFor } from './theme.js';
 
 let saveTimer = null;
 
@@ -128,13 +129,7 @@ function buildPalette() {
 }
 
 function iconFor(spec) {
-  const map = {
-    text: 'T', multiline: '≡', icon: '★', icon_sequence: '⋯', qrcode: '▦',
-    dlimg: '🖼', line: '─', rectangle: '▭', rectangle_pattern: '▦',
-    polygon: '⬟', circle: '○', ellipse: '⬭', arc: '◔',
-    progress_bar: '▰', plot: '📈', debug_grid: '▩',
-  };
-  return map[spec.type] || '◆';
+  return glyphFor(spec.type, spec);
 }
 
 // ---------------------------------------------------------------------------

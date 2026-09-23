@@ -5,3 +5,11 @@ data/
 .env
 .DS_Store
 .vscode/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Fonts for the pixel-accurate preview. Downloaded by
+# backend/scripts/fetch_assets.py (and at Docker build time) with size and
+# SHA-1 verification, so they are not committed.
+backend/app/assets/

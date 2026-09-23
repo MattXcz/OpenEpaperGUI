@@ -40,6 +40,10 @@ export const api = {
     method: 'POST', body: JSON.stringify(project),
   }),
 
+  preview: (project, accent = 'red') => request('/api/preview', {
+    method: 'POST', body: JSON.stringify({ project, accent }),
+  }),
+
   getSettings: () => request('/api/settings'),
   saveSettings: (settings) => request('/api/settings', {
     method: 'POST', body: JSON.stringify(settings),

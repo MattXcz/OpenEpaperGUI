@@ -9,9 +9,11 @@ import os
 import tempfile
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from . import main, storage
+from .render import assets_available
 
 ENV_KEYS = ("HA_URL", "HA_TOKEN")
 
@@ -264,6 +266,91 @@ def test_validate_skips_ha_when_unconfigured() -> None:
     client = _fresh()
     body = client.post("/api/validate", json={"nodes": []}).json()
     assert body["ok"] and body["source"] == "local"
+
+
+# ---------------------------------------------------------------------------
+# Pixel preview
+# ---------------------------------------------------------------------------
+
+requires_assets = pytest.mark.skipif(
+    not assets_available(),
+    reason="font assets missing; run backend/scripts/fetch_assets.py",
+)
+
+
+@requires_assets
+def test_preview_accepts_an_explicit_payload() -> None:
+    client = _fresh()
+    response = client.post("/api/preview", json={"payload": [
+        {"type": "circle", "x": 20, "y": 20, "radius": 10, "fill": "red"},
+    ]})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["image"].startswith("data:image/png;base64,")
+    assert body["elements"] == 1
+    assert body["errors"] == []
+
+
+@requires_assets
+def test_preview_renders_the_project_template_first() -> None:
+    """Templated values must be resolved before drawing, not drawn literally."""
+    client = _fresh()
+    body = client.post("/api/preview", json={
+        "project": {
+            "width": 200,
+            "height": 100,
+            "nodes": [
+                {"kind": "element", "type": "text",
+                 "props": {"value": "{{ 1 + 1 }}", "x": 2, "y": 2, "size": 20}},
+                {"kind": "element", "type": "progress_bar",
+                 "props": {"x_start": 0, "y_start": 50, "x_end": 100, "y_end": 70,
+                           "progress": "{{ 25 + 25 }}"}},
+            ],
+        },
+    }).json()
+    assert body["errors"] == [], body
+    assert body["elements"] == 2
+
+
+@requires_assets
+def test_preview_rejects_a_template_that_does_not_render() -> None:
+    client = _fresh()
+    response = client.post("/api/preview", json={
+        "project": {"width": 200, "height": 100, "nodes": [
+            {"kind": "element", "type": "line",
+             "props": {"x_start": 0, "x_end": ""}},
+        ]},
+    })
+    assert response.status_code == 400, response.text
+    assert "render" in response.json()["detail"]
+
+
+@requires_assets
+def test_preview_reports_element_problems_without_failing() -> None:
+    client = _fresh()
+    body = client.post("/api/preview", json={"payload": [
+        {"type": "circle", "x": 1},
+        {"type": "rectangle", "x_start": 0, "x_end": 10, "y_start": 0, "y_end": 10,
+         "fill": "black"},
+    ]}).json()
+    # The incomplete circle is reported by key, and the request still succeeds.
+    assert body["errors"], body
+    assert "circle" in body["errors"][0] and "missing required key" in body["errors"][0]
+    assert body["elements"] == 2
+
+
+@requires_assets
+def test_preview_requires_a_source() -> None:
+    client = _fresh()
+    response = client.post("/api/preview", json={})
+    assert response.status_code == 400
+    assert "project" in response.json()["detail"] or "payload" in response.json()["detail"]
+
+
+def test_preview_rejects_an_unknown_accent() -> None:
+    client = _fresh()
+    response = client.post("/api/preview", json={"payload": [], "accent": "purple"})
+    assert response.status_code == 422
 
 
 def _run() -> None:

@@ -2,19 +2,7 @@
 
 import { boundsOf } from './geometry.js';
 import { typeSpec } from './state.js';
-
-const COLOR_MAP = {
-  black: '#000000',
-  white: '#ffffff',
-  red: '#e02020',
-  yellow: '#e8c000',
-  accent: '#e02020',
-  half_black: '#808080',
-  half_white: '#c0c0c0',
-  half_red: '#f09090',
-  half_yellow: '#f4e090',
-  half_accent: '#f09090',
-};
+import { resolveColor } from './theme.js';
 
 // The MDI webfont glyphs are optional; when it is missing we fall back to a
 // simple placeholder so the canvas still communicates the layout.
@@ -47,19 +35,6 @@ function iconHtml(name, color, size) {
   return `<span title="${safe}" style="display:grid;place-items:center;width:100%;height:100%;
     font-family:var(--mono);font-size:${Math.max(8, size * 0.5)}px;color:${color};
     border:1px dashed currentColor;border-radius:3px;box-sizing:border-box;overflow:hidden;">${safe.slice(0, 3)}</span>`;
-}
-
-export function resolveColor(value, fallback = '#000000') {
-  if (!value) return fallback;
-  const key = String(value).toLowerCase();
-  if (COLOR_MAP[key]) return COLOR_MAP[key];
-  if (/^#[0-9a-f]{3}$/i.test(key) || /^#[0-9a-f]{6}$/i.test(key)) return key;
-  if (key === 'b') return '#000000';
-  if (key === 'w') return '#ffffff';
-  if (key === 'r') return '#e02020';
-  if (key === 'y') return '#e8c000';
-  if (key === 'a') return '#e02020';
-  return fallback;
 }
 
 function escapeHtml(text) {

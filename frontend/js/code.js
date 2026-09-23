@@ -2,6 +2,7 @@
 
 import { state, setState } from './state.js';
 import { api } from './api.js';
+import { openPixelPreview } from './modals.js';
 
 let output;
 let warningsEl;
@@ -14,6 +15,8 @@ export function initCode() {
   warningsEl = document.getElementById('code-warnings');
   statusEl = document.getElementById('code-status');
   validateBtn = document.getElementById('btn-validate');
+  const renderBtn = document.getElementById('btn-render');
+  if (renderBtn) renderBtn.addEventListener('click', () => openPixelPreview());
 
   document.querySelectorAll('[data-code]').forEach((button) => {
     button.addEventListener('click', () => {

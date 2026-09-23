@@ -3,9 +3,6 @@
 
 import { state, typeSpec } from './state.js';
 
-const CHAR_WIDTH = 0.58;   // monospace-ish advance per font-size unit
-const LINE_HEIGHT = 1.25;
-
 /**
  * Builds the variable context used to preview Jinja expressions.
  * Only literals declared in the project's Variables tab are known; entity
@@ -155,12 +152,23 @@ function propsOf(node) {
   return node.__resolvedProps || node.props || {};
 }
 
-function textSize(text, size) {
+// Text metrics come from the element's geometry block in schema.py, so the
+// editor and the generator describe text sizing in exactly one place. The
+// fallbacks only apply to element types that carry no metrics.
+function charWidthOf(g) {
+  return num(g?.char_width, 0.58);
+}
+
+function lineHeightOf(g) {
+  return num(g?.line_height, 1.25);
+}
+
+function textSize(text, size, g) {
   const lines = String(text ?? '').split('\n');
   const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
   return {
-    w: Math.max(4, longest * size * CHAR_WIDTH),
-    h: Math.max(4, lines.length * size * LINE_HEIGHT),
+    w: Math.max(4, longest * size * charWidthOf(g)),
+    h: Math.max(4, lines.length * size * lineHeightOf(g)),
   };
 }
 
@@ -212,9 +220,9 @@ export function boundsOf(node) {
       // text / multiline
       const size = num(p.size, 20);
       const lines = textLines(p, g);
-      const measured = textSize(lines.join('\n'), size);
+      const measured = textSize(lines.join('\n'), size, g);
       if (g.line_step) {
-        const lineH = size * LINE_HEIGHT;
+        const lineH = size * lineHeightOf(g);
         measured.h = (lines.length - 1) * num(p[g.line_step], 20) + lineH;
         return anchored(p, x, y, measured.w, measured.h, lineH);
       }
@@ -330,9 +338,9 @@ export function applyBounds(node, box, mode = 'move') {
     const step = g.line_step ? num(p[g.line_step], 20) : 0;
     if (mode === 'resize') {
       const textH = g.line_step ? box.h - (lines - 1) * step : box.h / lines;
-      p[g.size] = Math.max(1, Math.round(textH / LINE_HEIGHT));
+      p[g.size] = Math.max(1, Math.round(textH / lineHeightOf(g)));
     }
-    const lineH = g.line_step ? num(p.size, 20) * LINE_HEIGHT : box.h;
+    const lineH = g.line_step ? num(p.size, 20) * lineHeightOf(g) : box.h;
     Object.assign(p, keyed(g, anchorPoint(p, box, lineH)));
     return;
   }

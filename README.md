@@ -217,6 +217,44 @@ renders and that the payload is well formed. This also catches the one thing
 that cannot be checked statically — a quote that only appears at render time
 inside a `{{ }}` expression, which produces invalid JSON.
 
+### Pixel-accurate preview
+
+**🖼 Pixel preview** renders the project with the *real* drawing code and shows
+the result as a PNG — the same Pillow operations, fonts, colours, coordinate
+rules and defaults the integration uses when it draws to a tag.
+
+This is the honest counterpart to the canvas. The canvas is a fast
+approximation for editing; this is what the display will actually look like:
+
+* real `ppb.ttf` / `rbm.ttf` metrics, so text lands at the right width and wraps
+  where Home Assistant wraps it;
+* real Material Design Icons glyphs, resolved through the shipped MDI metadata;
+* the documented colour rules — `accent` follows the tag (switchable between red
+  and yellow in the dialog), `half_*` halftones, single-letter shortcuts, hex;
+* percentage coordinates, `y` auto-positioning, rotation and the 1-bit palette.
+
+The preview renders the template first, so `{{ states('sensor.x') }}` is
+resolved rather than drawn literally. **Zoom** scales the image with nearest
+neighbour so individual pixels stay visible, and **Checkerboard** puts it on a
+transparency grid — useful because an e-paper panel has no backlight.
+
+Anything the renderer cannot draw is reported instead of being silently
+dropped: per-element **errors** (a missing key, an unknown icon name) and
+**notes** for the two things that need a live Home Assistant — `plot` draws its
+frame and axes but no data, and `dlimg` shows a labelled placeholder instead of
+downloading a remote image.
+
+**Fonts** are not committed. `backend/scripts/fetch_assets.py` downloads them
+and verifies each file against a pinned size *and* git blob SHA-1, so a moved
+tag or a tampered mirror fails the build rather than shipping wrong glyphs. The
+Docker build runs it automatically; for a local checkout run it once:
+
+```bash
+cd backend
+python scripts/fetch_assets.py          # download what is missing
+python scripts/fetch_assets.py --check  # verify only
+```
+
 ### Sending to a display
 
 **📤 Send to display** renders the template and calls the configured Home
@@ -262,6 +300,8 @@ tag.
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
+│   ├── scripts/
+│   │   └── fetch_assets.py     # download + verify preview fonts
 │   └── app/
 │       ├── main.py             # FastAPI app + static hosting
 │       ├── schema.py           # single source of truth for element types
@@ -269,8 +309,19 @@ tag.
 │       ├── templating.py       # render + validate the generated template
 │       ├── storage.py          # JSON-file project storage
 │       ├── ha_client.py        # Home Assistant REST client
+│       ├── render/             # pixel-accurate PNG renderer
+│       │   ├── renderer.py     #   entry point + dispatch
+│       │   ├── colors.py       #   drawcustom palette
+│       │   ├── coordinates.py  #   pixels and percentages
+│       │   ├── fonts.py        #   font + MDI metadata loading
+│       │   ├── text.py         #   text, multiline, markup
+│       │   ├── shapes.py       #   line, rect, polygon, circle, arc
+│       │   ├── icons.py        #   icon, icon_sequence
+│       │   ├── media.py        #   qrcode, dlimg
+│       │   └── visualizations.py # progress_bar, plot
 │       ├── test_generator.py   # generator tests
 │       ├── test_templating.py  # render / validation tests
+│       ├── test_render.py      # preview renderer tests
 │       └── test_api.py         # HTTP / security tests
 └── frontend/
     ├── index.html
@@ -281,6 +332,7 @@ tag.
         ├── state.js            # state store + node helpers
         ├── canvas.js           # drag & drop, move, resize
         ├── geometry.js         # bounding boxes per element type
+        ├── theme.js            # colors + glyphs shared by the UI
         ├── renderer.js         # on-canvas previews
         ├── inspector.js        # schema-driven property editor
         ├── layers.js           # layer tree
@@ -323,8 +375,27 @@ asserts the result is valid JSON — covering the weather example, repeat-group
 comma placement, hidden elements, quoting, percentages and dynamic defaults.
 `test_templating` covers the render sandbox (permissive stubs, sandbox escapes,
 error reporting) and each validation stage, including the caret position in the
-error excerpt. `test_api` covers the HTTP layer: path traversal, host check,
-project ids, token handling and that *Send to display* renders before sending.
+error excerpt. `test_render` checks the preview renderer by inspecting pixels:
+colour resolution, coordinate parsing, rotation, per-element error handling and
+that one broken element does not stop the rest from drawing. `test_api` covers
+the HTTP layer: path traversal, host check, project ids, token handling and that
+*Send to display* renders before sending.
+
+The preview tests skip automatically when the fonts have not been fetched; run
+`python scripts/fetch_assets.py` first to include them.
+
+### CI
+
+`.github/workflows/ci.yml` runs four jobs on every push and pull request:
+
+| Job | What it checks |
+| --- | --- |
+| Backend | `ruff check app` and `python -m pytest -q app` |
+| Frontend | `node --check` on every module, plus that each relative import resolves to a file that exists |
+| Docker | the image builds (nothing is pushed) |
+
+Lint is pinned by `backend/ruff.toml` so a new ruff release cannot turn CI red
+for reasons unrelated to a change.
 
 ---
 
@@ -341,6 +412,7 @@ project ids, token handling and that *Send to display* renders before sending.
 | `DELETE` | `/api/projects/{id}` | Delete a project |
 | `POST` | `/api/generate/template` | Generate Jinja / YAML / JSON |
 | `POST` | `/api/validate` | Render the template and check the payload |
+| `POST` | `/api/preview` | Render a pixel-accurate PNG preview |
 | `GET` | `/api/settings` | Read settings (token redacted) |
 | `POST` | `/api/settings` | Save settings |
 | `GET` | `/api/ha/status` | Test the Home Assistant connection |
@@ -355,11 +427,15 @@ Interactive docs are available at `/docs`.
 
 * Projects are stored as JSON files in the `epaper-gui-data` volume. Back it up
   if you care about the layouts.
-* The canvas is a **design-time approximation**. Home Assistant and Pillow do
-  the real rendering, so exact font metrics and icon glyphs can differ slightly.
-  Use **Send to display → Dry run** to check the true result.
-* Icons in the editor use the MDI webfont from a CDN. Offline, elements fall
-  back to a labelled placeholder — the generated payload is unaffected.
+* The canvas is a **design-time approximation**. For the real thing use
+  **🖼 Pixel preview**, which renders with the actual drawing code, or
+  **Send to display → Dry run** to have Home Assistant produce the image.
+* The pixel preview cannot fetch live data: a `plot` renders its frame but no
+  series, and a `dlimg` with a remote URL renders a placeholder. Both are
+  reported as notes above the image.
+* Icons in the *editor* use the MDI webfont from a CDN. Offline, elements fall
+  back to a labelled placeholder — the generated payload and the pixel preview
+  are unaffected.
 * The QR preview is a placeholder; the real code is generated by Home Assistant.
 * *Validation* falls back to a local sandbox when Home Assistant is unreachable.
   Unresolved values render as `0`, so the check proves the template renders and

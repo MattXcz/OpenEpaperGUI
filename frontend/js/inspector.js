@@ -2,6 +2,7 @@
 
 import { state, setState, findNode, typeSpec, emit } from './state.js';
 import { render } from './canvas.js';
+import { resolveSwatch as sharedSwatch } from './theme.js';
 
 let container;
 let emptyState;
@@ -363,13 +364,7 @@ function colorInput(value, field, setValue) {
 }
 
 function resolveSwatch(value) {
-  const map = {
-    black: '#000', white: '#fff', red: '#e02020', yellow: '#e8c000', accent: '#e02020',
-    half_black: '#808080', half_white: '#c0c0c0', half_red: '#f09090',
-    half_yellow: '#f4e090', half_accent: '#f09090',
-  };
-  const key = String(value).toLowerCase();
-  return map[key] || key;
+  return sharedSwatch(value);
 }
 
 function selectInput(value, field, setValue) {

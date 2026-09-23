@@ -201,7 +201,7 @@ def build_local_env() -> SandboxedEnvironment:
     )
     env.filters = _FallbackDict(_stub_filter, env.filters)
     env.tests = _FallbackDict(lambda *a, **k: False, env.tests)
-    env.globals.update({name: _stub for name in _HA_GLOBALS})
+    env.globals.update(dict.fromkeys(_HA_GLOBALS, _stub))
     return env
 
 

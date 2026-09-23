@@ -11,6 +11,8 @@ export const state = {
   snap: true,
   preview: false,
   codeMode: 'template',
+  // Accent color used by the pixel-accurate preview, matching the tag.
+  previewAccent: 'red',
   generated: { template: '', yaml: '', payload: [] },
   dirty: false,
   settings: { haUrl: '', deviceId: '', service: '', hasToken: false },

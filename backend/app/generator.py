@@ -505,7 +505,7 @@ def generate_template(project: dict) -> str:
     lines.append("[")
 
     emitted_any = False
-    for node, count in zip(nodes, counts):
+    for node, count in zip(nodes, counts, strict=True):
         if count == 0:
             continue  # emits nothing, so it must not affect comma placement
         block = _emit_node(node, not emitted_any, INDENT, guard)

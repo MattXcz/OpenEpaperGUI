@@ -294,6 +294,134 @@ export function openExport() {
 }
 
 // ---------------------------------------------------------------------------
+// Pixel-accurate preview
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders the project with the real drawing code and shows the PNG.
+ *
+ * This is the honest counterpart to the canvas: same fonts, colours,
+ * coordinates and Pillow calls as the integration, so what is shown here is
+ * what the tag will draw.
+ */
+export async function openPixelPreview() {
+  let result = null;
+  let failure = null;
+
+  try {
+    result = await api.preview(state.project, state.previewAccent || 'red');
+  } catch (error) {
+    failure = error.message;
+  }
+
+  let zoom = 2;
+  let showGrid = false;
+
+  openModal('Pixel preview', (body) => {
+    if (failure) {
+      body.innerHTML = `<div class="preview-error">${escapeHtml(failure)}</div>`;
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'preview-wrap';
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'preview-toolbar';
+    toolbar.innerHTML = `
+      <span class="muted small">${result.width}×${result.height} · ${result.elements} element(s)</span>
+      <span class="preview-spacer"></span>
+      <label class="field-inline"><span>Accent</span>
+        <select id="preview-accent" class="input input-sm">
+          <option value="red">red</option>
+          <option value="yellow">yellow</option>
+        </select>
+      </label>
+      <label class="field-inline"><span>Zoom</span>
+        <input id="preview-zoom" class="input input-sm input-num" type="number" min="1" max="8" step="1" value="${zoom}" />
+      </label>
+      <button id="preview-checker" class="btn btn-ghost btn-sm">▦ Checkerboard</button>
+    `;
+    wrap.appendChild(toolbar);
+
+    const stage = document.createElement('div');
+    stage.className = 'preview-stage';
+
+    const img = document.createElement('img');
+    img.className = 'preview-image';
+    img.src = result.image;
+    img.alt = 'Rendered preview of the display';
+    stage.appendChild(img);
+    wrap.appendChild(stage);
+
+    const applyZoom = () => {
+      img.style.width = `${result.width * zoom}px`;
+      img.style.height = `${result.height * zoom}px`;
+      img.style.imageRendering = zoom >= 2 ? 'pixelated' : 'auto';
+    };
+    applyZoom();
+
+    const zoomInput = toolbar.querySelector('#preview-zoom');
+    zoomInput.addEventListener('input', () => {
+      zoom = Math.min(8, Math.max(1, Number(zoomInput.value) || 1));
+      applyZoom();
+    });
+
+    const accentSelect = toolbar.querySelector('#preview-accent');
+    accentSelect.value = state.previewAccent || 'red';
+    accentSelect.addEventListener('change', async () => {
+      setState({ previewAccent: accentSelect.value });
+      closeModal();
+      await openPixelPreview();
+    });
+
+    toolbar.querySelector('#preview-checker').addEventListener('click', (event) => {
+      showGrid = !showGrid;
+      stage.classList.toggle('is-checkered', showGrid);
+      event.target.classList.toggle('is-active', showGrid);
+    });
+
+    body.appendChild(wrap);
+
+    if (result.errors.length) {
+      body.appendChild(previewIssues('✕ Some elements could not be drawn', result.errors, 'is-error'));
+    }
+    if (result.notes.length) {
+      body.appendChild(previewIssues('ℹ Not shown in this preview', result.notes, 'is-note'));
+    }
+  }, (foot) => {
+    const download = document.createElement('button');
+    download.className = 'btn btn-ghost';
+    download.textContent = 'Download PNG';
+    download.addEventListener('click', () => {
+      if (!result) return;
+      const link = document.createElement('a');
+      link.href = result.image;
+      link.download = `${(state.project.name || 'epaper').replace(/\s+/g, '-').toLowerCase()}-preview.png`;
+      link.click();
+    });
+    foot.appendChild(download);
+  });
+}
+
+function previewIssues(title, items, className) {
+  const box = document.createElement('div');
+  box.className = `preview-issues ${className}`;
+  const heading = document.createElement('div');
+  heading.className = 'status-head';
+  heading.textContent = title;
+  box.appendChild(heading);
+  const list = document.createElement('ul');
+  for (const item of items) {
+    const li = document.createElement('li');
+    li.textContent = item;
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  return box;
+}
+
+// ---------------------------------------------------------------------------
 // Push to display
 // ---------------------------------------------------------------------------
 

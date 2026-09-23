@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import ipaddress
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ from .generator import (
     generate_yaml,
 )
 from .ha_client import HomeAssistantClient, HomeAssistantError
+from .render import RenderError, assets_available, render_payload
 from .schema import default_props, public_schema
 from .templating import payload_from_rendered, validate_project
 
@@ -136,6 +138,19 @@ class PushRequest(BaseModel):
     dryRun: bool = False
 
 
+class PreviewRequest(BaseModel):
+    """A preview request: either a project or an explicit payload.
+
+    ``payload`` lets the editor preview exactly what it has on the canvas
+    without a round trip through the generator; ``project`` is rendered through
+    the generator so a preview can also be requested for a saved project.
+    """
+
+    project: Project | None = None
+    payload: list[dict] | None = Field(default=None, max_length=2000)
+    accent: Literal["red", "yellow"] = "red"
+
+
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
@@ -154,8 +169,10 @@ async def schema() -> dict:
 async def schema_defaults(element_type: str) -> dict:
     try:
         return {"type": element_type, "props": default_props(element_type)}
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Unknown type: {element_type}")
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown type: {element_type}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +254,81 @@ async def validate_endpoint(project: Project) -> dict:
     return result
 
 
+@app.post("/api/preview")
+async def preview_endpoint(request: PreviewRequest) -> dict:
+    """Render a payload to a PNG with the real drawing code.
+
+    Unlike the canvas (a design-time approximation), this uses the same fonts,
+    colours, coordinates and Pillow calls the integration uses, so the result is
+    pixel-accurate.
+
+    A project is run through the generator *and then rendered* before drawing,
+    because the payload contains Jinja expressions (`{{ states('sensor.x') }}`)
+    that would otherwise reach the renderer as literal strings. Rendering uses
+    Home Assistant when configured and the local sandbox otherwise.
+
+    Returns the image as a data URI along with per-element ``errors`` and
+    ``notes``. Problems do not fail the request: a preview that shows fifteen
+    correct elements and one broken one is more useful than an error.
+    """
+    if not assets_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Font assets are not available. Run backend/scripts/fetch_assets.py "
+                   "or rebuild the Docker image.",
+        )
+
+    width, height = 296, 128
+    background, rotate = "white", 0
+    render_notes: list[str] = []
+
+    if request.project is not None:
+        project = request.project.model_dump()
+        background = project.get("background", "white")
+        rotate = project.get("rotate", 0)
+        width, height = project["width"], project["height"]
+
+        settings = storage.effective_settings()
+        client: HomeAssistantClient | None = None
+        if settings.get("haUrl") and settings.get("haToken"):
+            client = HomeAssistantClient(settings["haUrl"], settings["haToken"])
+
+        check = await validate_project(project, client)
+        if not check["ok"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"The template must render before it can be previewed: {check['error']}",
+            )
+        payload = check["payload"]
+        if check.get("haError"):
+            render_notes.append(f"rendered locally, not by Home Assistant: {check['haError']}")
+    elif request.payload is not None:
+        payload = request.payload
+    else:
+        raise HTTPException(status_code=400, detail="Provide either 'project' or 'payload'.")
+
+    try:
+        png, errors, notes = render_payload(
+            payload,
+            width=width,
+            height=height,
+            accent=request.accent,
+            background=background,
+            rotate=rotate,
+        )
+    except RenderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "image": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
+        "width": width,
+        "height": height,
+        "elements": len(payload),
+        "errors": errors,
+        "notes": [*render_notes, *notes],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
@@ -278,7 +370,7 @@ async def ha_entities(domain: str | None = None) -> list[dict]:
         client = HomeAssistantClient(settings["haUrl"], settings["haToken"])
         return await client.list_entities(domain)
     except HomeAssistantError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/ha/push")
@@ -337,7 +429,7 @@ async def ha_push(request: PushRequest) -> dict:
     try:
         result = await client.call_service(domain, service_name, data)
     except HomeAssistantError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return {
         "ok": True,

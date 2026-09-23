@@ -3,6 +3,7 @@
 import { state, setState, findNode, findParent, removeNode, typeSpec } from './state.js';
 import { render } from './canvas.js';
 import { elementLabel } from './renderer.js';
+import { glyphFor } from './theme.js';
 
 let container;
 
@@ -200,12 +201,5 @@ function reparent(nodeId, targetId) {
 }
 
 function iconFor(type) {
-  const spec = typeSpec(type);
-  const map = {
-    text: 'T', multiline: '≡', icon: '★', icon_sequence: '⋯', qrcode: '▦',
-    dlimg: '🖼', line: '─', rectangle: '▭', rectangle_pattern: '▦',
-    polygon: '⬟', circle: '○', ellipse: '⬭', arc: '◔',
-    progress_bar: '▰', plot: '📈', debug_grid: '▩',
-  };
-  return map[type] || spec?.label?.[0] || '?';
+  return glyphFor(type, typeSpec(type));
 }
