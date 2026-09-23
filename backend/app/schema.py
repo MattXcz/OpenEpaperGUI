@@ -404,7 +404,7 @@ ELEMENT_TYPES: list[dict] = [
             _num("y_start", "Y start", 20),
             _num("x_end", "X end", 199),
             _num("y_end", "Y end", 119),
-            _num("duration", "Duration (s)", 36000, group="Content", min=60),
+            _num("duration", "Duration (s)", 86400, group="Content", min=60),
             _num("low", "Min value", None, group="Content"),
             _num("high", "Max value", None, group="Content"),
             _select("font", "Font", FONTS, "ppb.ttf"),
@@ -461,12 +461,25 @@ REQUIRED_FIELDS: dict[str, set[str]] = {
     "debug_grid": set(),
 }
 
+# Optional fields whose Home Assistant default is *dynamic* (auto-positioned,
+# canvas size, derived from another field …). No schema default can match it,
+# so "omit when equal to the default" would silently move the element on the
+# display. These are always emitted, exactly like required fields.
+ALWAYS_EMIT_FIELDS: dict[str, set[str]] = {
+    "multiline": {"y"},                               # HA: last position + y_padding
+    "line": {"y_start", "y_end"},                     # HA: auto / = y_start
+    "plot": {"x_start", "y_start", "x_end", "y_end"},  # HA: 0 / canvas size
+    "debug_grid": {"label_step"},                     # HA: 2 * spacing
+}
+
+
+def emitted_always(element_type: str) -> set[str]:
+    """Fields the generator emits regardless of the schema default."""
+    return REQUIRED_FIELDS.get(element_type, set()) | ALWAYS_EMIT_FIELDS.get(element_type, set())
+
+
 # Fields that are purely editor-side and never emitted into the payload.
 INTERNAL_FIELDS = {"visible"}
-
-# Fields whose value is a Home Assistant template and must be emitted verbatim
-# (unquoted) so Jinja can evaluate it.
-TEMPLATE_FIELDS = {"value", "data", "url", "progress", "low", "high", "duration"}
 
 DISPLAY_PRESETS = [
     {"label": "2.9\" BWR (296x128)", "width": 296, "height": 128},

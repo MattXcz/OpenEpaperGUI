@@ -543,3 +543,13 @@ code { font-family: var(--mono); background: var(--bg-elev-2); padding: 1px 4px;
   .panel-right { width: 280px; }
   .canvas-toolbar { gap: 8px; padding: 6px 10px; }
 }
+.code-warnings {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--warning);
+  background: rgba(255, 184, 77, 0.1);
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.4;
+}

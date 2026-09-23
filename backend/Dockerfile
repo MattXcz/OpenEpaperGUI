@@ -18,4 +18,6 @@ RUN mkdir -p /data
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form wrapper so LOG_LEVEL is honoured; `exec` keeps uvicorn as PID 1
+# so it still receives SIGTERM from `docker compose down`.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --log-level \"${LOG_LEVEL:-info}\""]

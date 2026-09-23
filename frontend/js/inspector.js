@@ -72,6 +72,7 @@ function buildHeader(node, spec) {
   const dup = document.createElement('button');
   dup.className = 'btn-icon';
   dup.title = 'Duplicate';
+  dup.setAttribute('aria-label', dup.title);
   dup.textContent = '⧉';
   dup.addEventListener('click', async () => {
     const { duplicateSelected } = await import('./canvas.js');
@@ -81,6 +82,7 @@ function buildHeader(node, spec) {
   const del = document.createElement('button');
   del.className = 'btn-icon';
   del.title = 'Delete';
+  del.setAttribute('aria-label', del.title);
   del.textContent = '🗑';
   del.addEventListener('click', async () => {
     const { deleteSelected } = await import('./canvas.js');
@@ -118,9 +120,19 @@ function buildGroupInspector(node) {
     node.repeat.var = value || 'i';
   }));
 
-  section.appendChild(buildSimpleField('Iterations', 'number', node.repeat?.count ?? 1, (value) => {
-    node.repeat.count = Math.max(1, parseInt(value, 10) || 1);
-  }));
+  // A whole number (0 allowed) or a Jinja expression such as
+  // `forecast | length` / `{{ n }}`; the generator handles both.
+  const iterations = buildSimpleField('Iterations', 'text', node.repeat?.count ?? 1, (value) => {
+    const text = String(value).trim();
+    if (text === '') node.repeat.count = 1;
+    else if (/^\d+$/.test(text)) node.repeat.count = Number(text);
+    else node.repeat.count = text;
+  });
+  const help = document.createElement('div');
+  help.className = 'field-help';
+  help.innerHTML = 'A number, or a Jinja expression such as <code>forecast | length</code>.';
+  iterations.appendChild(help);
+  section.appendChild(iterations);
 
   section.appendChild(buildSimpleField('Enabled', 'bool', node.repeat?.enabled !== false, (value) => {
     node.repeat.enabled = value;

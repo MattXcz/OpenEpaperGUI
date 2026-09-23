@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import storage
-from .generator import generate_payload, generate_template, generate_yaml
+from .generator import (
+    collect_warnings,
+    generate_payload,
+    generate_template,
+    generate_yaml,
+)
 from .ha_client import HomeAssistantClient, HomeAssistantError
 from .schema import default_props, public_schema
 
@@ -41,25 +47,79 @@ if CORS_ORIGINS:
     )
 
 
+def _env_list(name: str) -> list[str]:
+    return [item.strip().lower() for item in os.environ.get(name, "").split(",") if item.strip()]
+
+
+# DNS rebinding protection. CORS does not help against a malicious page whose
+# own hostname is re-pointed at this server: the browser then treats the app
+# as same-origin. Such requests always carry the attacker's hostname in `Host`,
+# so only accept hosts that cannot be attacker-controlled names: IP literals,
+# `localhost`, typical LAN suffixes and whatever is listed in ALLOWED_HOSTS.
+# `ALLOWED_HOSTS=*` switches the check off.
+ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS")
+_LAN_SUFFIXES = (".local", ".lan", ".home", ".internal", ".home.arpa", ".localdomain")
+
+
+def host_allowed(host_header: str) -> bool:
+    if "*" in ALLOWED_HOSTS:
+        return True
+    host = (host_header or "").strip().lower()
+    if host.startswith("["):  # [::1]:8099
+        host = host[1:].split("]", 1)[0]
+    elif host.count(":") == 1:
+        host = host.rsplit(":", 1)[0]
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    if host == "localhost" or "." not in host or host.endswith(_LAN_SUFFIXES):
+        return True
+    for allowed in ALLOWED_HOSTS:
+        if allowed.startswith("*.") and host.endswith(allowed[1:]):
+            return True
+        if host == allowed:
+            return True
+    return False
+
+
+@app.middleware("http")
+async def check_host(request: Request, call_next):
+    if not host_allowed(request.headers.get("host", "")):
+        return PlainTextResponse(
+            "Host not allowed. Add it to the ALLOWED_HOSTS environment variable.",
+            status_code=400,
+        )
+    return await call_next(request)
+
+
+# Services the push endpoint may call with the stored token. Without a limit,
+# anyone who can reach the editor could call *any* Home Assistant service.
+ALLOWED_SERVICE_DOMAINS = _env_list("ALLOWED_SERVICE_DOMAINS") or ["open_epaper_link"]
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
 
 class Project(BaseModel):
-    id: str | None = None
-    name: str = "Untitled"
-    width: int = 296
-    height: int = 128
-    background: str = "white"
-    nodes: list[dict] = Field(default_factory=list)
-    variables: list[dict] = Field(default_factory=list)
+    id: str | None = Field(default=None, max_length=64)
+    name: str = Field(default="Untitled", max_length=200)
+    width: int = Field(default=296, ge=1, le=4096)
+    height: int = Field(default=128, ge=1, le=4096)
+    background: str = Field(default="white", max_length=32)
+    nodes: list[dict] = Field(default_factory=list, max_length=2000)
+    variables: list[dict] = Field(default_factory=list, max_length=500)
 
 
 class Settings(BaseModel):
-    haUrl: str | None = None
-    haToken: str | None = None
-    deviceId: str | None = None
-    service: str | None = None
+    haUrl: str | None = Field(default=None, max_length=500)
+    haToken: str | None = Field(default=None, max_length=2000)
+    deviceId: str | None = Field(default=None, max_length=200)
+    service: str | None = Field(default=None, max_length=200)
 
 
 class PushRequest(BaseModel):
@@ -116,6 +176,11 @@ async def create_project(project: Project) -> dict:
 
 @app.put("/api/projects/{project_id}")
 async def update_project(project_id: str, project: Project) -> dict:
+    if not storage.is_valid_id(project_id):
+        raise HTTPException(status_code=400, detail="Invalid project id")
+    if not storage.project_exists(project_id):
+        # Create with POST; a PUT to a deleted project must not resurrect it.
+        raise HTTPException(status_code=404, detail="Project not found")
     data = project.model_dump()
     data["id"] = project_id
     return storage.save_project(data)
@@ -139,6 +204,7 @@ async def generate_template_endpoint(project: Project) -> dict:
         "template": generate_template(data),
         "yaml": generate_yaml(data),
         "payload": generate_payload(data),
+        "warnings": collect_warnings(data),
     }
 
 
@@ -154,8 +220,11 @@ async def get_settings() -> dict:
 @app.post("/api/settings")
 async def update_settings(settings: Settings) -> dict:
     payload = {k: v for k, v in settings.model_dump().items() if v is not None}
-    storage.save_settings(payload)
-    return storage.public_settings()
+    url = (payload.get("haUrl") or "").strip()
+    if url and not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Home Assistant URL must start with http:// or https://")
+    saved = storage.save_settings(payload)
+    return {**storage.public_settings(), "tokenCleared": saved["tokenCleared"]}
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +263,12 @@ async def ha_push(request: PushRequest) -> dict:
     if "." not in service:
         raise HTTPException(status_code=400, detail=f"Invalid service: {service}")
     domain, service_name = service.split(".", 1)
+    if domain.lower() not in ALLOWED_SERVICE_DOMAINS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Service domain '{domain}' is not allowed "
+                   "(see ALLOWED_SERVICE_DOMAINS).",
+        )
 
     project = request.project.model_dump()
     template = generate_template(project)

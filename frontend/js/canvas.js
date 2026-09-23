@@ -239,7 +239,7 @@ function buildElementNode(node, index) {
     wrapper.classList.add('is-group');
     wrapper.innerHTML = `
       <div class="el-box" style="border-color:var(--warning);border-style:solid;"></div>
-      <div class="el-label" style="color:var(--warning);">⟳ ${escapeHtml(node.name || 'group')} × ${node.repeat?.count ?? 1}</div>
+      <div class="el-label" style="color:var(--warning);">⟳ ${escapeHtml(node.name || 'group')} × ${escapeHtml(String(node.repeat?.count ?? 1))}</div>
     `;
   } else {
     const box = node.__display || boundsOf(node);

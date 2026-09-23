@@ -3,3 +3,4 @@
 # assert the result is valid JSON.
 -r requirements.txt
 jinja2>=3.1,<4.0
+pyyaml>=6.0,<7.0

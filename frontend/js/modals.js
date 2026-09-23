@@ -111,8 +111,11 @@ export async function openProjects(onLoad) {
       const del = document.createElement('button');
       del.className = 'btn-icon';
       del.textContent = '🗑';
+      del.title = `Delete ${project.name}`;
+      del.setAttribute('aria-label', `Delete project ${project.name}`);
       del.addEventListener('click', async (event) => {
         event.stopPropagation();
+        if (!window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
         try {
           await api.deleteProject(project.id);
           item.remove();
@@ -168,7 +171,7 @@ export async function openSettings(onSaved) {
       <div class="field">
         <div class="field-label"><span>Long-lived access token</span></div>
         <input id="set-token" class="input" type="password" placeholder="${settings.hasToken ? '•••••••• (already set)' : 'paste token'}" />
-        <div class="field-help">Leave empty to keep the existing token. Can also be provided via the <code>HA_TOKEN</code> environment variable.</div>
+        <div class="field-help">Leave empty to keep the existing token. Changing the URL requires entering the token again. Can also be provided via the <code>HA_TOKEN</code> environment variable (used only with <code>HA_URL</code>).</div>
       </div>
       <div class="field">
         <div class="field-label"><span>Target device ID</span></div>
@@ -226,6 +229,11 @@ export async function openSettings(onSaved) {
     if (token) payload.haToken = token;
     const saved = await api.saveSettings(payload);
     setState({ settings: saved });
+    if (saved.tokenCleared) {
+      // The token is bound to the URL it was entered for (see storage.py).
+      toast('Home Assistant URL changed — please enter the token for the new URL', 'error');
+      document.getElementById('set-token').placeholder = 'paste token';
+    }
     return saved;
   }
 }

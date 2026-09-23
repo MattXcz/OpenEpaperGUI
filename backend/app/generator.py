@@ -46,15 +46,17 @@ import json
 import re
 from typing import Any
 
-from .schema import ELEMENT_TYPES_BY_NAME, INTERNAL_FIELDS, REQUIRED_FIELDS
+from .schema import ELEMENT_TYPES_BY_NAME, INTERNAL_FIELDS, emitted_always
 
 INDENT = "  "
 
 _INTEGER_RE = re.compile(r"-?\d+")
 _NUMERIC_RE = re.compile(r"-?\d+(?:\.\d+)?")
-_WHOLE_TAG_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}", re.S)
+# drawcustom accepts percentages for positions, e.g. `x: "50%"`.
+_PERCENT_RE = re.compile(r"-?\d+(?:\.\d+)?%")
+_WHOLE_TAG_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}", re.DOTALL)
 # Splits a string into literal chunks and whole Jinja tags (odd indexes).
-_JINJA_SEGMENT_RE = re.compile(r"(\{\{.*?\}\}|\{%.*?%\})", re.S)
+_JINJA_SEGMENT_RE = re.compile(r"(\{\{.*?\}\}|\{%.*?%\})", re.DOTALL)
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +87,10 @@ def _fmt_number(value: Any) -> str:
     if _NUMERIC_RE.fullmatch(text):
         # A numeric string, e.g. "42" typed into a number field.
         return text
+    if _PERCENT_RE.fullmatch(text):
+        # A relative position. It has to stay a JSON string: `{{ 50% }}` is a
+        # Jinja syntax error and a bare `50%` is invalid JSON.
+        return json.dumps(text)
     # A bare expression such as `spacing` or `15 + i*spacing`. Wrapping it is
     # what the user meant; emitting it raw would produce invalid JSON.
     return "{{ " + text + " }}"
@@ -198,7 +204,7 @@ def _element_lines(element: dict, indent: str) -> list[str]:
     if props.get("visible") is False:
         return []
 
-    required = REQUIRED_FIELDS.get(element_type, set())
+    required = emitted_always(element_type)
 
     pairs: list[tuple[str, str]] = [("type", _fmt_string(element_type))]
     for field in spec["fields"]:
@@ -425,6 +431,29 @@ def generate_template(project: dict) -> str:
     return "\n".join(lines)
 
 
+def collect_warnings(project: dict) -> list[str]:
+    """Things in the project the generator cannot express and will skip."""
+    warnings: list[str] = []
+
+    def check(node: dict, parent: dict | None) -> None:
+        if node.get("kind") == "group":
+            if parent is not None:
+                warnings.append(
+                    f"Nested group \"{node.get('name') or 'group'}\" inside "
+                    f"\"{parent.get('name') or 'group'}\" is not supported; "
+                    "its content is skipped. Move it to the top level."
+                )
+                return
+            for child in node.get("children") or []:
+                check(child, node)
+        elif node.get("type") not in ELEMENT_TYPES_BY_NAME:
+            warnings.append(f"Unknown element type \"{node.get('type')}\" is skipped.")
+
+    for node in project.get("nodes") or []:
+        check(node, None)
+    return warnings
+
+
 def generate_payload(project: dict) -> list[dict]:
     """Generate the *static* payload, ignoring repeat groups.
 
@@ -439,7 +468,7 @@ def generate_payload(project: dict) -> list[dict]:
         props = element.get("props") or {}
         if props.get("visible") is False:
             return
-        required = REQUIRED_FIELDS.get(element["type"], set())
+        required = emitted_always(element["type"])
         item: dict[str, Any] = {"type": element["type"]}
         for field in spec["fields"]:
             key = field["key"]
@@ -508,7 +537,6 @@ def _scalar(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return _fmt_number(value)
-    text = str(value)
-    if _is_template(text):
-        return text
-    return json.dumps(text, ensure_ascii=False)
+    # Always quote: a bare `{{ … }}` starts a YAML flow mapping, and values
+    # like `50%`, `yes` or `#fff` would change type or become comments.
+    return json.dumps(str(value), ensure_ascii=False)

@@ -11,7 +11,9 @@ async function request(path, options = {}) {
       const body = await response.json();
       detail = body.detail || detail;
     } catch { /* ignore */ }
-    throw new Error(detail);
+    const error = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    error.status = response.status;
+    throw error;
   }
   if (response.status === 204) return null;
   return response.json();
@@ -40,7 +42,7 @@ export const api = {
   }),
 
   haStatus: () => request('/api/ha/status'),
-  haEntities: (domain) => request(`/api/ha/entities${domain ? `?domain=${domain}` : ''}`),
+  haEntities: (domain) => request(`/api/ha/entities${domain ? `?domain=${encodeURIComponent(domain)}` : ''}`),
   haPush: (payload) => request('/api/ha/push', {
     method: 'POST', body: JSON.stringify(payload),
   }),

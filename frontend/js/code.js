@@ -4,10 +4,12 @@ import { state, setState } from './state.js';
 import { api } from './api.js';
 
 let output;
+let warningsEl;
 let debounceTimer = null;
 
 export function initCode() {
   output = document.getElementById('code-output');
+  warningsEl = document.getElementById('code-warnings');
 
   document.querySelectorAll('[data-code]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -55,6 +57,15 @@ async function generate() {
 
 function paint() {
   if (!output) return;
+  if (warningsEl) {
+    const warnings = state.generated.warnings || [];
+    warningsEl.hidden = !warnings.length;
+    warningsEl.replaceChildren(...warnings.map((text) => {
+      const line = document.createElement('div');
+      line.textContent = `⚠ ${text}`;
+      return line;
+    }));
+  }
   const mode = state.codeMode;
   if (mode === 'payload') {
     output.textContent = JSON.stringify(state.generated.payload || [], null, 2);

@@ -88,10 +88,14 @@ variables in `.env`:
 | `LOG_LEVEL` | `info` | uvicorn log level |
 | `DATA_DIR` | `/data` | Where projects and settings are stored |
 | `CORS_ORIGINS` | – | Extra browser origins allowed to call the API, comma separated |
+| `ALLOWED_HOSTS` | – | Extra hostnames the editor answers to, e.g. `epaper.example.com`, `*.example.com`; `*` disables the check |
+| `ALLOWED_SERVICE_DOMAINS` | `open_epaper_link` | Home Assistant service domains *Send to display* may call |
 
 Create a token in Home Assistant under **Profile → Security → Long-lived access
-tokens**. Values saved in the UI take precedence over environment variables,
-except that the environment token is used when none is saved.
+tokens**. Values saved in the UI take precedence over environment variables.
+The token is bound to the URL it belongs to: `HA_TOKEN` is only sent to
+`HA_URL`, and changing the URL in the UI discards the saved token, so enter the
+token again together with a new URL.
 
 ---
 
@@ -107,7 +111,8 @@ except that the environment token is used when none is saved.
 | Resize | Drag the corner / edge handles |
 | Duplicate | `Ctrl`/`Cmd` + `D` |
 | Delete | `Delete` / `Backspace` |
-| Centre horizontally | `C` |
+| Centre horizontally | `C` (without modifiers) |
+| Save now | `Ctrl`/`Cmd` + `S` |
 | Deselect | `Esc` |
 
 Toggle **Grid** and **Snap** in the toolbar. **Preview** hides the selection
@@ -116,8 +121,10 @@ chrome so you see the design as it will render.
 ### Display resolution
 
 Pick a preset (2.9", 2.13", 4.2", 7.5" …) or enter a custom width/height. The
-canvas resizes immediately and coordinates are always in display pixels, so the
-generated payload matches the target panel.
+canvas resizes immediately and coordinates are in display pixels, so the
+generated payload matches the target panel. Position fields also accept
+percentages of the canvas (`50%`), as `drawcustom` does; together with an
+`anchor` such as `mm` this centres an element.
 
 ### Element types
 
@@ -136,8 +143,12 @@ Every documented property is exposed in the Inspector, grouped into
 ### Home Assistant templates
 
 Any text or number field accepts Jinja. Type `{{ states('sensor.temp') }}` into
-a value and it is emitted verbatim (unquoted) so Home Assistant evaluates it at
-render time. Fields containing `{{` or `{%` are tagged with a **jinja** badge.
+a value and Home Assistant evaluates it at render time: in number fields the
+expression is emitted bare (`"x": {{ 15 + i*spacing }}`), in text fields it
+stays inside the JSON string (`"value": "{{ states('sensor.temp') }} °C"`). A
+bare expression typed into a number field, such as `15 + i*spacing`, is wrapped
+in `{{ }}` for you. Fields containing `{{` or `{%` are tagged with a **jinja**
+badge.
 
 ### Variables
 
@@ -157,13 +168,16 @@ A **Repeat group** wraps its children in a `{% for %}` loop — this is how the
 
 1. Add a **Repeat group** from the palette (under *Structure*).
 2. Drag the elements that should repeat onto the canvas.
-3. Select the group and set the **loop variable** (`i`), **iterations** (`8`)
-   and any **pre-loop statements** (e.g. `offsets = [offset_0, offset_1, ...]`).
+3. Select the group and set the **loop variable** (`i`), **iterations** (`8`,
+   or a Jinja expression such as `forecast | length`) and any **pre-loop
+   statements** (e.g. `offsets = [offset_0, offset_1, ...]`).
 4. Use `i` in child fields: `{{ 15 + i*spacing }}`.
 
-The generator handles comma placement so the output is always valid JSON: a
-group that is the first element emits `{% if not loop.first %},{% endif %}`
-instead of a leading comma.
+Groups cannot be nested. The generator handles comma placement so the output is
+always valid JSON: a group that is the first element emits
+`{% if not loop.first %},{% endif %}` instead of a leading comma, and a dynamic
+iteration count switches to a runtime flag. Anything the generator has to skip
+is listed as a warning above the output in the **Code** tab.
 
 ### Exporting
 
@@ -206,7 +220,8 @@ the tag.
 │       ├── generator.py        # visual model -> Jinja / YAML / JSON
 │       ├── storage.py          # JSON-file project storage
 │       ├── ha_client.py        # Home Assistant REST client
-│       └── test_generator.py   # generator tests
+│       ├── test_generator.py   # generator tests
+│       └── test_api.py         # HTTP / security tests
 └── frontend/
     ├── index.html
     ├── css/styles.css
@@ -235,8 +250,10 @@ and the generator. Adding a new draw type means adding one entry there.
 
 * Required properties are always emitted.
 * Optional properties are emitted only when they differ from the documented
-  default — so the output stays as short as a hand-written template.
-* Values containing `{{` / `{%` are emitted unquoted so Jinja evaluates them.
+  default — so the output stays as short as a hand-written template. Properties
+  whose Home Assistant default is dynamic (a line's `y_end`, a plot's box,
+  `multiline.y`, …) are always emitted, so the display matches the canvas.
+* Jinja in number fields is emitted bare, in text fields inside the string.
 * Properties whose documented default is `null` are omitted unless explicitly
   set.
 
@@ -248,11 +265,14 @@ and the generator. Adding a new draw type means adding one entry there.
 cd backend
 pip install -r requirements-dev.txt
 python -m app.test_generator
+python -m app.test_api
 ```
 
-The suite renders generated templates with a real Jinja environment and asserts
-the result is valid JSON — covering the weather example, groups in first
-position, hidden elements, numeric types and shapes.
+`test_generator` renders generated templates with a real Jinja environment and
+asserts the result is valid JSON — covering the weather example, repeat-group
+comma placement, hidden elements, quoting, percentages and dynamic defaults.
+`test_api` covers the HTTP layer: path traversal, host check, project ids and
+token handling.
 
 ---
 
@@ -296,6 +316,16 @@ a Home Assistant long-lived token and can push to your displays, so treat it as
 a trusted-network tool: bind it to your LAN or put it behind a reverse proxy
 with auth, and do not expose the port to the internet.
 
-Cross-origin requests are rejected by default. Only set `CORS_ORIGINS` if you
-serve the frontend from a different host or port, and list exact origins —
-without authentication, any allowed origin can act on your behalf.
+Built-in guard rails:
+
+* Cross-origin requests are rejected by default. Only set `CORS_ORIGINS` if you
+  serve the frontend from a different host or port, and list exact origins —
+  without authentication, any allowed origin can act on your behalf.
+* Requests whose `Host` header is not an IP address, `localhost`, a dot-less
+  name, a LAN suffix (`.local`, `.lan`, `.home.arpa`, …) or listed in
+  `ALLOWED_HOSTS` are rejected. This blocks DNS rebinding; behind a reverse
+  proxy with its own domain, add that domain to `ALLOWED_HOSTS`.
+* The token is only ever sent to the URL it was configured for (see
+  *Configuration*), so pointing the editor at another server does not leak it.
+* *Send to display* can only call services in `ALLOWED_SERVICE_DOMAINS`
+  (default `open_epaper_link`).

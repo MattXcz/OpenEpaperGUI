@@ -9,7 +9,8 @@ import json
 
 from jinja2 import Environment
 
-from .generator import generate_template
+from .generator import collect_warnings, generate_template, generate_yaml
+from .schema import default_props
 
 ICON_MAP = {"sunny": "mdi:weather-sunny", "rainy": "mdi:weather-rainy"}
 
@@ -277,6 +278,61 @@ def test_static_output_has_no_runtime_guard() -> None:
     """The guard is only paid for when an iteration count is dynamic."""
     static = generate_template(_weather_project())
     assert "namespace(first=true)" not in static, static
+
+
+def test_percentage_positions() -> None:
+    """`x: "50%"` is documented drawcustom syntax and must stay a string."""
+    payload = _render(generate_template(_project(_text(x="50%", y="12.5%"))))
+    assert payload[0]["x"] == "50%" and payload[0]["y"] == "12.5%", payload
+
+
+def _element(etype: str, **props: object) -> dict:
+    return {"kind": "element", "type": etype, "props": {**default_props(etype), **props}}
+
+
+def test_dynamic_defaults_are_always_emitted() -> None:
+    """Fields whose HA default is dynamic must never be omitted.
+
+    Omitting `y_end: 0` makes HA draw to `y_start`; omitting a plot's box makes
+    it span the whole canvas; omitting `multiline.y` auto-positions it.
+    """
+    payload = _render(generate_template(_project(
+        _element("line", y_start=60, y_end=0),
+        _element("plot"),
+        _element("multiline", y=0),
+        _element("debug_grid", spacing=10),
+    )))
+    line, plot, multiline, grid = payload
+    assert line["y_start"] == 60 and line["y_end"] == 0, line
+    assert {k: plot[k] for k in ("x_start", "y_start", "x_end", "y_end")} == \
+        {"x_start": 10, "y_start": 20, "x_end": 199, "y_end": 119}, plot
+    assert multiline["y"] == 0, multiline
+    assert grid["label_step"] == 40, grid
+
+
+def test_plot_duration_default_matches_home_assistant() -> None:
+    """Default duration is HA's 86400, so leaving it untouched is correct."""
+    payload = _render(generate_template(_project(_element("plot"))))
+    assert "duration" not in payload[0], payload
+    payload = _render(generate_template(_project(_element("plot", duration=3600))))
+    assert payload[0]["duration"] == 3600, payload
+
+
+def test_yaml_with_jinja_is_valid_yaml() -> None:
+    import yaml
+
+    project = _project(_text(value='{{ states("sensor.t") }} °C', x="50%", color="#fff"))
+    parsed = yaml.safe_load(generate_yaml(project))
+    assert parsed[0]["value"] == '{{ states("sensor.t") }} °C', parsed
+    assert parsed[0]["x"] == "50%" and parsed[0]["color"] == "#fff", parsed
+
+
+def test_nested_group_is_reported() -> None:
+    inner = {**_group([_text()]), "name": "inner"}
+    project = _project({**_group([inner]), "name": "outer"})
+    warnings = collect_warnings(project)
+    assert len(warnings) == 1 and "inner" in warnings[0], warnings
+    assert collect_warnings(_weather_project()) == []
 
 
 def _run() -> None:

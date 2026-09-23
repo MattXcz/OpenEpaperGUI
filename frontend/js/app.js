@@ -288,9 +288,13 @@ function wireKeyboard() {
 
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
       event.preventDefault();
-      saveProject();
+      saveProject({ manual: true });
       return;
     }
+
+    // Plain-key shortcuts only: Cmd/Ctrl/Alt combos (Cmd+C, Ctrl+Arrow, …)
+    // belong to the browser and the OS.
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
 
     const step = event.shiftKey ? 10 : 1;
     if (event.key === 'ArrowLeft') { event.preventDefault(); nudgeSelected(-step, 0); scheduleGenerate(); }
@@ -328,25 +332,64 @@ function updateSaveState() {
   el.classList.toggle('is-saved', !state.dirty);
 }
 
+// Every edit bumps `revision`. A save only clears the dirty flag when nothing
+// changed while it was in flight, and only one save runs at a time — two
+// concurrent first saves (debounce + Cmd+S) used to create two projects.
+let revision = 0;
+let saving = null;
+let saveAgain = false;
+let saveErrorShown = false;
+
 function scheduleSave() {
+  revision += 1;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveProject, 1500);
+  saveTimer = setTimeout(() => saveProject(), 1500);
 }
 
-async function saveProject() {
+async function saveProject({ manual = false } = {}) {
   if (!state.project) return;
-  try {
-    // Strip editor-only preview metadata (keys prefixed with "__").
-    const payload = JSON.parse(JSON.stringify(state.project, (key, value) =>
-      key.startsWith('__') ? undefined : value));
-    const saved = state.project.id
-      ? await api.updateProject(state.project.id, payload)
-      : await api.createProject(payload);
-    state.project.id = saved.id;
-    state.dirty = false;
-    updateSaveState();
-  } catch {
-    // Autosave failures are non-fatal; the user can still export.
+  clearTimeout(saveTimer);
+  if (saving) {
+    saveAgain = true;
+    return saving;
+  }
+  const project = state.project;
+  const savedRevision = revision;
+  saving = (async () => {
+    try {
+      // Strip editor-only preview metadata (keys prefixed with "__").
+      const payload = JSON.parse(JSON.stringify(project, (key, value) =>
+        key.startsWith('__') ? undefined : value));
+      let saved;
+      if (project.id) {
+        try {
+          saved = await api.updateProject(project.id, payload);
+        } catch (error) {
+          // Deleted meanwhile (e.g. from another tab): save it as a new one.
+          if (error.status !== 404) throw error;
+          saved = await api.createProject({ ...payload, id: null });
+        }
+      } else {
+        saved = await api.createProject(payload);
+      }
+      if (state.project !== project) return; // another project was loaded
+      project.id = saved.id;
+      if (revision === savedRevision) state.dirty = false;
+      updateSaveState();
+      saveErrorShown = false;
+      if (manual) toast('Project saved', 'success');
+    } catch (error) {
+      // Autosave errors are shown once per failure streak, manual ones always.
+      if (manual || !saveErrorShown) toast(`Save failed: ${error.message}`, 'error');
+      if (!manual) saveErrorShown = true;
+    } finally {
+      saving = null;
+    }
+  })();
+  await saving;
+  if (saveAgain) {
+    saveAgain = false;
+    if (state.dirty) await saveProject();
   }
 }
 

@@ -1,7 +1,7 @@
 // Derives a bounding box (in display pixels) for every element type.
 // The box is what the canvas uses for hit-testing, dragging and resizing.
 
-import { typeSpec } from './state.js';
+import { state, typeSpec } from './state.js';
 
 const CHAR_WIDTH = 0.58;   // monospace-ish advance per font-size unit
 const LINE_HEIGHT = 1.25;
@@ -106,6 +106,37 @@ function num(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+// drawcustom accepts positions as a percentage of the canvas, e.g. "50%".
+function coord(value, extent) {
+  if (typeof value === 'string' && /^\s*-?\d+(\.\d+)?%\s*$/.test(value)) {
+    return (parseFloat(value) / 100) * extent;
+  }
+  return num(value);
+}
+const cx = (value) => coord(value, state.project?.width || 0);
+const cy = (value) => coord(value, state.project?.height || 0);
+
+// Pillow text anchors: horizontal l/m/r, vertical a/t (top), m, s/b/d (bottom).
+// Returns the fraction of the box that lies left of / above the anchor point.
+function anchorFactors(anchor) {
+  const a = String(anchor || '').toLowerCase();
+  const fx = { l: 0, m: 0.5, r: 1 }[a[0]] ?? 0;
+  const fy = { a: 0, t: 0, m: 0.5, s: 1, b: 1, d: 1 }[a[1]] ?? 0;
+  return [fx, fy];
+}
+
+// Top-left corner of a box of size w×h whose anchor sits at (x, y).
+function anchored(p, x, y, w, h) {
+  const [fx, fy] = anchorFactors(p.anchor);
+  return { x: x - w * fx, y: y - h * fy, w, h };
+}
+
+// Inverse of `anchored`: where the anchor point of `box` lies.
+function anchorPoint(p, box) {
+  const [fx, fy] = anchorFactors(p.anchor);
+  return { x: Math.round(box.x + box.w * fx), y: Math.round(box.y + box.h * fy) };
+}
+
 function propsOf(node) {
   return node.__resolvedProps || node.props || {};
 }
@@ -131,8 +162,8 @@ export function boundsOf(node) {
 
   switch (g.kind) {
     case 'point': {
-      const x = num(p[g.x]);
-      const y = num(p[g.y]);
+      const x = cx(p[g.x]);
+      const y = cy(p[g.y]);
 
       if (g.radius) {
         const r = num(p[g.radius], 10);
@@ -157,12 +188,12 @@ export function boundsOf(node) {
         const total = count * size + (count - 1) * spacing;
         const horizontal = (p.direction || 'right') === 'right' || (p.direction || 'right') === 'left';
         return horizontal
-          ? { x, y, w: total, h: size }
-          : { x, y, w: size, h: total };
+          ? anchored(p, x, y, total, size)
+          : anchored(p, x, y, size, total);
       }
       if (g.square) {
         const size = num(p.size, 24);
-        return { x, y, w: size, h: size };
+        return anchored(p, x, y, size, size);
       }
       // text / multiline
       const size = num(p.size, 20);
@@ -175,14 +206,14 @@ export function boundsOf(node) {
         const lines = text.split('\n').length;
         measured.h = (lines - 1) * num(p[g.line_step], 20) + size * LINE_HEIGHT;
       }
-      return { x, y, w: measured.w, h: measured.h };
+      return anchored(p, x, y, measured.w, measured.h);
     }
 
     case 'box': {
-      const x1 = num(p[g.x_start]);
-      const y1 = num(p[g.y_start]);
-      const x2 = num(p[g.x_end]);
-      const y2 = num(p[g.y_end]);
+      const x1 = cx(p[g.x_start]);
+      const y1 = cy(p[g.y_start]);
+      const x2 = cx(p[g.x_end]);
+      const y2 = cy(p[g.y_end]);
       const left = Math.min(x1, x2);
       const top = Math.min(y1, y2);
       const w = Math.abs(x2 - x1);
@@ -194,8 +225,8 @@ export function boundsOf(node) {
     }
 
     case 'pattern': {
-      const xStart = num(p[g.x_start]);
-      const yStart = num(p[g.y_start]);
+      const xStart = cx(p[g.x_start]);
+      const yStart = cy(p[g.y_start]);
       const xSize = num(p[g.x_size], 10);
       const ySize = num(p[g.y_size], 10);
       const xOffset = num(p[g.x_offset]);
@@ -273,15 +304,13 @@ export function applyBounds(node, box, mode = 'move') {
       const total = horizontal ? box.w : box.h;
       const size = Math.max(1, Math.round((total - (count - 1) * (num(p.spacing) || 0)) / count));
       p[g.size] = size;
-      p[g.x] = Math.round(box.x);
-      p[g.y] = Math.round(box.y);
+      Object.assign(p, keyed(g, anchorPoint(p, box)));
       return;
     }
     if (g.square) {
       const size = Math.max(1, Math.round(Math.max(box.w, box.h)));
       p[g.size] = size;
-      p[g.x] = Math.round(box.x);
-      p[g.y] = Math.round(box.y);
+      Object.assign(p, keyed(g, anchorPoint(p, { ...box, w: size, h: size })));
       return;
     }
     // text / multiline
@@ -290,8 +319,7 @@ export function applyBounds(node, box, mode = 'move') {
       const size = Math.max(1, Math.round(box.h / (lines * LINE_HEIGHT)));
       p[g.size] = size;
     }
-    p[g.x] = Math.round(box.x);
-    p[g.y] = Math.round(box.y);
+    Object.assign(p, keyed(g, anchorPoint(p, box)));
     return;
   }
 
@@ -330,6 +358,10 @@ export function applyBounds(node, box, mode = 'move') {
       Math.round(box.y + (num(pt[1]) - current.y) * sy),
     ]);
   }
+}
+
+function keyed(g, point) {
+  return { [g.x]: point.x, [g.y]: point.y };
 }
 
 export function snapValue(value, enabled, step = 2) {
