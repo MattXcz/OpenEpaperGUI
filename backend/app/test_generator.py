@@ -9,7 +9,12 @@ import json
 
 from jinja2 import Environment
 
-from .generator import collect_warnings, generate_template, generate_yaml
+from .generator import (
+    collect_warnings,
+    generate_payload,
+    generate_template,
+    generate_yaml,
+)
 from .schema import default_props
 
 ICON_MAP = {"sunny": "mdi:weather-sunny", "rainy": "mdi:weather-rainy"}
@@ -327,12 +332,98 @@ def test_yaml_with_jinja_is_valid_yaml() -> None:
     assert parsed[0]["x"] == "50%" and parsed[0]["color"] == "#fff", parsed
 
 
-def test_nested_group_is_reported() -> None:
+def _values(project: dict) -> list:
+    return [item["value"] for item in _render(generate_template(project))]
+
+
+def test_nested_loops() -> None:
+    """A loop inside a loop expands to outer × inner items."""
+    inner = {**_group([_text(value="{{ i }}{{ j }}")], count=3, var="j"), "name": "inner"}
+    outer = _group([_text(value="h{{ i }}"), inner], count=2)
+    assert _values(_project(outer)) == ["h0", "00", "01", "02", "h1", "10", "11", "12"]
+
+
+def test_nested_loop_first_with_hidden_and_trailing_nodes() -> None:
+    inner = _group([_text(visible=False), _text(value="{{ i }}{{ j }}")], count=2, var="j")
+    outer = _group([inner], count=2)
+    assert _values(_project(outer, _text(value="end"))) == ["00", "01", "10", "11", "end"]
+
+
+def test_nested_zero_and_empty_groups() -> None:
+    empty = _group([_text(visible=False)], var="j")
+    zero = _group([_text()], count=0, var="k")
+    outer = _group([empty, zero, _text(value="x")], count=2)
+    assert _values(_project(_text(value="a"), outer)) == ["a", "x", "x"]
+
+
+def test_loop_inside_disabled_group() -> None:
+    loop = _group([_text(value="{{ i }}")], count=2)
+    wrapper = _group([_text(value="w"), loop], enabled=False)
+    assert _values(_project(wrapper)) == ["w", "0", "1"]
+
+
+def test_nested_static_payload_flattens_disabled_groups() -> None:
+    wrapper = _group([_text(value="w"), _group([_text(value="z")], enabled=False)], enabled=False)
+    assert [p["value"] for p in generate_payload(_project(wrapper))] == ["w", "z"]
+
+
+def test_nested_group_reusing_loop_variable_is_reported() -> None:
     inner = {**_group([_text()]), "name": "inner"}
     project = _project({**_group([inner]), "name": "outer"})
     warnings = collect_warnings(project)
-    assert len(warnings) == 1 and "inner" in warnings[0], warnings
+    assert len(warnings) == 1 and "inner" in warnings[0] and '"i"' in warnings[0], warnings
     assert collect_warnings(_weather_project()) == []
+
+
+def test_user_ns_variable_does_not_clash_with_guard() -> None:
+    project = _project(_group([_text(value="{{ ns.v }}")], count="{{ n }}"))
+    project["variables"] = [{"name": "ns", "value": "namespace(v='u')"}]
+    assert _values(project) == ["u", "u", "u"]
+
+
+def test_plot_axes_and_legends() -> None:
+    plot = _element("plot", yaxis={"grid_style": "lines"}, ylegend={}, xaxis=None,
+                    xlegend={"format": "%H", "interval": ""})
+    item = _render(generate_template(_project(plot)))[0]
+    assert item["yaxis"] == {"grid_style": "lines"}, item
+    # All-default objects must not become `{}`, which HA treats as "off".
+    assert item["ylegend"] == {"position": "left"}, item
+    assert item["xlegend"] == {"format": "%H"}, item
+    assert "xaxis" not in item, item
+    static = generate_payload(_project(plot))[0]
+    assert static["ylegend"] == {"position": "left"} and "xaxis" not in static, static
+
+
+def test_plot_axis_accepts_jinja() -> None:
+    plot = _element("plot", yaxis={"tick_every": "{{ n }}"})
+    assert _render(generate_template(_project(plot)))[0]["yaxis"] == {"tick_every": 3}
+
+
+def test_corners_force_radius() -> None:
+    """HA rounds with radius 10 when `corners` comes without `radius`."""
+    item = _render(generate_template(_project(_element("rectangle", corners="top_left"))))[0]
+    assert item["corners"] == "top_left" and item["radius"] == 0, item
+    item = _render(generate_template(_project(_element("rectangle"))))[0]
+    assert "corners" not in item and "radius" not in item, item
+    item = _render(generate_template(_project(_element("rectangle_pattern", corners="top_left"))))[0]
+    assert item["radius"] == 0, item
+
+
+def test_text_anchor_forced_for_multiline_text() -> None:
+    """HA uses "la" instead of "lt" for multi-line text without an anchor."""
+    item = _render(generate_template(_project(_text(value="a\nb"))))[0]
+    assert item["anchor"] == "lt", item
+    item = _render(generate_template(_project(_text(max_width=50))))[0]
+    assert item["anchor"] == "lt", item
+    item = _render(generate_template(_project(_text(value="ab"))))[0]
+    assert "anchor" not in item, item
+
+
+def test_multiline_anchor_default_matches_home_assistant() -> None:
+    item = _render(generate_template(_project(_element("multiline"))))[0]
+    assert "anchor" not in item, item  # HA default "lm" == schema default
+    item = _render(generate_template(_project(_element("multiline", anchor="lt"))))[0]
+    assert item["anchor"] == "lt", item
 
 
 def _run() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import os
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -113,6 +114,10 @@ class Project(BaseModel):
     background: str = Field(default="white", max_length=32)
     nodes: list[dict] = Field(default_factory=list, max_length=2000)
     variables: list[dict] = Field(default_factory=list, max_length=500)
+    # drawcustom service options, sent with "Send to display".
+    rotate: Literal[0, 90, 180, 270] = 0
+    dither: Literal[0, 1, 2] = 2
+    ttl: int = Field(default=60, ge=0, le=86400)
 
 
 class Settings(BaseModel):
@@ -277,6 +282,9 @@ async def ha_push(request: PushRequest) -> dict:
         "device_id": device_id,
         "payload": template,
         "background": request.background or project.get("background", "white"),
+        "rotate": project["rotate"],
+        "dither": project["dither"],
+        "ttl": project["ttl"],
     }
     if request.dryRun:
         data["dry-run"] = True

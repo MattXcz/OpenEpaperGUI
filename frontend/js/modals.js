@@ -308,11 +308,41 @@ export function openPush() {
         <div class="field-label"><span>Service</span></div>
         <input id="push-service" class="input" type="text" value="${escapeHtml(state.settings.service || 'open_epaper_link.drawcustom')}" />
       </div>
+      <div class="field-row">
+        <div class="field">
+          <div class="field-label"><span>Rotate</span></div>
+          <select id="push-rotate" class="input">
+            ${[0, 90, 180, 270].map((v) => `<option value="${v}"${state.project.rotate === v ? ' selected' : ''}>${v}°</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <div class="field-label"><span>Dither</span></div>
+          <select id="push-dither" class="input">
+            ${[[0, 'none'], [1, 'Floyd-Steinberg'], [2, 'ordered']].map(([v, label]) => `<option value="${v}"${state.project.dither === v ? ' selected' : ''}>${v} – ${label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <div class="field-label"><span>TTL (s)</span></div>
+          <input id="push-ttl" class="input" type="number" min="0" max="86400" value="${Number(state.project.ttl ?? 60)}" />
+        </div>
+      </div>
       <div class="field">
         <label class="checkbox-row"><input id="push-dry" type="checkbox" /> Dry run (render without sending)</label>
       </div>
-      <p class="muted small">The generated Jinja template is sent as the <code>payload</code> parameter.</p>
+      <p class="muted small">The generated Jinja template is sent as the <code>payload</code> parameter.
+        Rotate, dither and TTL are saved with the project.</p>
     `;
+    // The body is not in the document yet, so query it directly.
+    const saveOptions = () => {
+      const ttl = Math.round(Number(body.querySelector('#push-ttl').value));
+      state.project.rotate = Number(body.querySelector('#push-rotate').value);
+      state.project.dither = Number(body.querySelector('#push-dither').value);
+      state.project.ttl = Number.isFinite(ttl) ? Math.min(86400, Math.max(0, ttl)) : 60;
+      setState({ dirty: true }, 'change');
+    };
+    ['#push-rotate', '#push-dither', '#push-ttl'].forEach((selector) => {
+      body.querySelector(selector).addEventListener('change', saveOptions);
+    });
   }, (foot) => {
     const send = document.createElement('button');
     send.className = 'btn btn-primary';
@@ -321,6 +351,8 @@ export function openPush() {
       send.disabled = true;
       send.textContent = 'Sending…';
       try {
+        // Make sure a TTL that is still being typed is applied.
+        document.getElementById('push-ttl').dispatchEvent(new Event('change'));
         const result = await api.haPush({
           project: state.project,
           deviceId: document.getElementById('push-device').value.trim(),

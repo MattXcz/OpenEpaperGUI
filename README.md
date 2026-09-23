@@ -138,7 +138,15 @@ All types from the `drawcustom` documentation are supported:
 | Utility | `debug_grid` |
 
 Every documented property is exposed in the Inspector, grouped into
-**Content / Position / Style / Advanced**.
+**Content / Position / Style / Advanced** — including the plot's
+`ylegend` / `yaxis` / `xlegend` / `xaxis` options under **Axes & legends**
+(tick a box to switch one on).
+
+Where the OpenEPaperLink image generator derives a default from other
+properties, the editor follows it: `multiline` anchors every line at `lm`
+(left-middle), a multi-line or wrapped `text` gets an explicit `anchor`, and a
+rectangle with `corners` always carries its `radius` (HA would otherwise round
+with 10 px).
 
 ### Home Assistant templates
 
@@ -173,11 +181,17 @@ A **Repeat group** wraps its children in a `{% for %}` loop — this is how the
    statements** (e.g. `offsets = [offset_0, offset_1, ...]`).
 4. Use `i` in child fields: `{{ 15 + i*spacing }}`.
 
-Groups cannot be nested. The generator handles comma placement so the output is
-always valid JSON: a group that is the first element emits
-`{% if not loop.first %},{% endif %}` instead of a leading comma, and a dynamic
-iteration count switches to a runtime flag. Anything the generator has to skip
-is listed as a warning above the output in the **Code** tab.
+Groups can be nested (drag a group onto another one in the **Layers** tab) to
+build nested loops, e.g. rows × columns; give each level its own loop variable.
+An **Enabled** checkbox turned off makes a group a plain folder that emits its
+children once.
+
+The generator handles comma placement so the output is always valid JSON: a
+group that is the first element emits `{% if not loop.first %},{% endif %}`
+instead of a leading comma, and a dynamic iteration count or nested groups
+switch to a runtime flag (`oepl_ns`). Anything the generator has to skip, or a
+nested group reusing its parent's loop variable, is listed as a warning above
+the output in the **Code** tab.
 
 ### Exporting
 
@@ -197,10 +211,15 @@ data:
   device_id: "0011223344556677"
   payload: "{{ <generated template> }}"
   background: white
+  rotate: 0
+  dither: 2
+  ttl: 60
 ```
 
-Enable **Dry run** to have Home Assistant render the image without pushing it to
-the tag.
+**Rotate**, **Dither** (0 none, 1 Floyd-Steinberg, 2 ordered) and **TTL** are
+set in the *Send to display* dialog and saved with the project. Enable
+**Dry run** to have Home Assistant render the image without pushing it to the
+tag.
 
 ---
 

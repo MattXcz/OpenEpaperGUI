@@ -45,6 +45,10 @@ export function createProject(name = 'Untitled') {
     background: 'white',
     nodes: [],
     variables: [],
+    // drawcustom service options (see "Send to display").
+    rotate: 0,
+    dither: 2,
+    ttl: 60,
   };
 }
 

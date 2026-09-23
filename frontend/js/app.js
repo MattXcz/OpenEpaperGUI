@@ -402,6 +402,9 @@ function loadProject(project) {
     background: project.background || 'white',
     nodes: project.nodes || [],
     variables: project.variables || [],
+    rotate: [0, 90, 180, 270].includes(Number(project.rotate)) ? Number(project.rotate) : 0,
+    dither: [0, 1, 2].includes(Number(project.dither)) ? Number(project.dither) : 2,
+    ttl: Number.isInteger(Number(project.ttl)) && Number(project.ttl) >= 0 ? Number(project.ttl) : 60,
   };
   state.selection = null;
   state.dirty = false;

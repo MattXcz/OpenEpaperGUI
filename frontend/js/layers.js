@@ -3,7 +3,6 @@
 import { state, setState, findNode, findParent, removeNode, typeSpec } from './state.js';
 import { render } from './canvas.js';
 import { elementLabel } from './renderer.js';
-import { toast } from './modals.js';
 
 let container;
 
@@ -180,12 +179,7 @@ function reparent(nodeId, targetId) {
   const target = targetId ? findNode(targetId) : null;
   if (target) {
     if (target.kind !== 'group') return;
-    // Loops cannot be nested: the generator only expands top-level groups.
-    if (node.kind === 'group') {
-      toast('Repeat groups cannot be nested', 'error');
-      return;
-    }
-    // Reject cycles.
+    // Reject cycles (a group dropped into itself or its descendants).
     let cursor = target;
     while (cursor) {
       if (cursor.id === nodeId) return;

@@ -553,3 +553,10 @@ code { font-family: var(--mono); background: var(--bg-elev-2); padding: 1px 4px;
   font-size: 12px;
   line-height: 1.4;
 }
+
+.object-editor { display: flex; flex-direction: column; gap: 6px; }
+.object-fields {
+  padding: 8px 0 0 10px;
+  border-left: 2px solid var(--border);
+}
+.object-fields[hidden] { display: none; }

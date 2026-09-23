@@ -246,6 +246,9 @@ function buildField(node, field) {
     case 'plotdata':
       wrap.appendChild(plotDataInput(value, field, setValue));
       break;
+    case 'object':
+      wrap.appendChild(objectInput(node, field));
+      break;
     default:
       wrap.appendChild(textInput(value, field, setValue));
   }
@@ -556,6 +559,51 @@ function plotDataInput(value, field, setValue) {
 
   rebuild();
   return wrap;
+}
+
+// A nested option object (plot axes / legends): `null` = off, otherwise a dict
+// of sub-properties edited with the regular field editors.
+function objectInput(node, field) {
+  const box = document.createElement('div');
+  box.className = 'object-editor';
+
+  const row = document.createElement('label');
+  row.className = 'checkbox-row';
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.checked = isPlainObject(node.props[field.key]);
+  row.append(toggle, document.createTextNode(`Show ${field.label.toLowerCase()}`));
+  box.appendChild(row);
+
+  const body = document.createElement('div');
+  body.className = 'object-fields';
+  box.appendChild(body);
+
+  const paint = () => {
+    body.innerHTML = '';
+    const value = node.props[field.key];
+    body.hidden = !isPlainObject(value);
+    if (!isPlainObject(value)) return;
+    // The sub-editors write straight into this dict through a stand-in node.
+    const proxy = { props: value };
+    for (const sub of field.fields || []) {
+      if (!(sub.key in value)) value[sub.key] = sub.default ?? null;
+      body.appendChild(buildField(proxy, sub));
+    }
+  };
+
+  toggle.addEventListener('change', () => {
+    node.props[field.key] = toggle.checked ? {} : null;
+    paint();
+    markDirty();
+  });
+
+  paint();
+  return box;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function markDirty() {

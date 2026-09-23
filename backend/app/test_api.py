@@ -141,6 +141,34 @@ def test_push_rejects_foreign_service_domains() -> None:
     assert response.status_code == 400 and "not allowed" in response.json()["detail"]
 
 
+def test_push_sends_service_options() -> None:
+    client = _fresh()
+    client.post("/api/settings", json={"haUrl": "http://ha.local", "haToken": "t"})
+    calls = []
+
+    async def fake_call(self, domain, service, data):
+        calls.append((domain, service, data))
+        return []
+
+    original = main.HomeAssistantClient.call_service
+    main.HomeAssistantClient.call_service = fake_call
+    try:
+        response = client.post("/api/ha/push", json={
+            "project": {"rotate": 90, "dither": 0, "ttl": 300}, "deviceId": "abc",
+        })
+        assert response.status_code == 200, response.text
+        data = calls[0][2]
+        assert (data["rotate"], data["dither"], data["ttl"]) == (90, 0, 300), data
+        response = client.post("/api/ha/push", json={"project": {}, "deviceId": "abc"})
+        data = calls[1][2]
+        assert (data["rotate"], data["dither"], data["ttl"]) == (0, 2, 60), data
+    finally:
+        main.HomeAssistantClient.call_service = original
+    assert client.post("/api/ha/push", json={
+        "project": {"rotate": 45}, "deviceId": "abc",
+    }).status_code == 422
+
+
 def _run() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failures = 0

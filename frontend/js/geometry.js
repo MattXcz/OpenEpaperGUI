@@ -126,15 +126,29 @@ function anchorFactors(anchor) {
 }
 
 // Top-left corner of a box of size w×h whose anchor sits at (x, y).
-function anchored(p, x, y, w, h) {
+// `anchorH` is the height the vertical anchor refers to: the whole box, or a
+// single line for `multiline`, where HA anchors every line on its own.
+function anchored(p, x, y, w, h, anchorH = h) {
   const [fx, fy] = anchorFactors(p.anchor);
-  return { x: x - w * fx, y: y - h * fy, w, h };
+  return { x: x - w * fx, y: y - anchorH * fy, w, h };
 }
 
 // Inverse of `anchored`: where the anchor point of `box` lies.
-function anchorPoint(p, box) {
+function anchorPoint(p, box, anchorH = box.h) {
   const [fx, fy] = anchorFactors(p.anchor);
-  return { x: Math.round(box.x + box.w * fx), y: Math.round(box.y + box.h * fy) };
+  return { x: Math.round(box.x + box.w * fx), y: Math.round(box.y + anchorH * fy) };
+}
+
+// Lines of a text element; `multiline` drops newlines and splits on the
+// delimiter, exactly like the HA image generator.
+function textLines(p, g) {
+  const text = String(p[g.text] ?? '');
+  if (g.split) {
+    const delimiter = String(p[g.split] ?? '');
+    const flat = text.replace(/\n/g, '');
+    return delimiter ? flat.split(delimiter) : [flat];
+  }
+  return text.split('\n');
 }
 
 function propsOf(node) {
@@ -197,14 +211,12 @@ export function boundsOf(node) {
       }
       // text / multiline
       const size = num(p.size, 20);
-      let text = String(p[g.text] ?? '');
-      if (g.split && p[g.split]) {
-        text = text.split(String(p[g.split])).join('\n');
-      }
-      const measured = textSize(text, size);
-      if (g.line_step && text.includes('\n')) {
-        const lines = text.split('\n').length;
-        measured.h = (lines - 1) * num(p[g.line_step], 20) + size * LINE_HEIGHT;
+      const lines = textLines(p, g);
+      const measured = textSize(lines.join('\n'), size);
+      if (g.line_step) {
+        const lineH = size * LINE_HEIGHT;
+        measured.h = (lines.length - 1) * num(p[g.line_step], 20) + lineH;
+        return anchored(p, x, y, measured.w, measured.h, lineH);
       }
       return anchored(p, x, y, measured.w, measured.h);
     }
@@ -314,12 +326,14 @@ export function applyBounds(node, box, mode = 'move') {
       return;
     }
     // text / multiline
+    const lines = textLines(p, g).length;
+    const step = g.line_step ? num(p[g.line_step], 20) : 0;
     if (mode === 'resize') {
-      const lines = String(p[g.text] ?? '').split('\n').length;
-      const size = Math.max(1, Math.round(box.h / (lines * LINE_HEIGHT)));
-      p[g.size] = size;
+      const textH = g.line_step ? box.h - (lines - 1) * step : box.h / lines;
+      p[g.size] = Math.max(1, Math.round(textH / LINE_HEIGHT));
     }
-    Object.assign(p, keyed(g, anchorPoint(p, box)));
+    const lineH = g.line_step ? num(p.size, 20) * LINE_HEIGHT : box.h;
+    Object.assign(p, keyed(g, anchorPoint(p, box, lineH)));
     return;
   }
 

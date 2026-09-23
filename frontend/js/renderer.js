@@ -96,19 +96,24 @@ export function renderElementContent(node) {
       const color = resolveColor(p.color, '#000');
       const size = Number(p.size) || 20;
       const weight = p.stroke_width ? 'bold' : 'normal';
-      return `<div class="el-text" style="font-size:${size}px;color:${color};font-weight:${weight};white-space:pre-wrap;">${escapeHtml(text)}</div>`;
+      const align = ['left', 'center', 'right'].includes(p.align) ? p.align : 'left';
+      return `<div class="el-text" style="font-size:${size}px;color:${color};font-weight:${weight};white-space:pre-wrap;text-align:${align};">${escapeHtml(text)}</div>`;
     }
 
     case 'multiline': {
-      const delimiter = p.delimiter || '|';
-      let text = String(p.value ?? '');
+      // Same split as HA: newlines are dropped, then the delimiter splits.
+      const delimiter = String(p.delimiter ?? '');
+      let text = String(p.value ?? '').replace(/\n/g, '');
       if (p.parse_colors) text = stripColorMarkup(text);
-      const lines = text.split(delimiter);
+      const lines = delimiter ? text.split(delimiter) : [text];
       const color = resolveColor(p.color, '#000');
       const size = Number(p.size) || 20;
       const offset = Number(p.offset_y) || 20;
+      // Every line is anchored on its own, so a middle/right anchor centres or
+      // right-aligns each line individually.
+      const align = { m: 'center', r: 'right' }[String(p.anchor || 'lm')[0]] || 'left';
       const html = lines
-        .map((line, index) => `<div style="position:absolute;top:${index * offset}px;left:0;white-space:pre;">${escapeHtml(line)}</div>`)
+        .map((line, index) => `<div style="position:absolute;top:${index * offset}px;left:0;right:0;white-space:pre;text-align:${align};">${escapeHtml(line)}</div>`)
         .join('');
       return `<div class="el-text" style="font-size:${size}px;color:${color};position:relative;">${html}</div>`;
     }
@@ -184,6 +189,7 @@ export function renderElementContent(node) {
       const ySize = Number(p.y_size) || 10;
       const xOffset = Number(p.x_offset) || 0;
       const yOffset = Number(p.y_offset) || 0;
+      const radius = Number(p.radius) || 0;
       const totalW = xRepeat * xSize + (xRepeat - 1) * xOffset;
       const totalH = yRepeat * ySize + (yRepeat - 1) * yOffset;
       let rects = '';
@@ -191,7 +197,7 @@ export function renderElementContent(node) {
         for (let col = 0; col < xRepeat; col += 1) {
           const x = col * (xSize + xOffset);
           const y = row * (ySize + yOffset);
-          rects += `<rect x="${x}" y="${y}" width="${xSize}" height="${ySize}" fill="${fill}" stroke="${outline}" stroke-width="${width}" />`;
+          rects += `<rect x="${x}" y="${y}" width="${xSize}" height="${ySize}" rx="${radius}" ry="${radius}" fill="${fill}" stroke="${outline}" stroke-width="${width}" />`;
         }
       }
       return `<svg class="el-shape" viewBox="0 0 ${totalW} ${totalH}" preserveAspectRatio="none">${rects}</svg>`;

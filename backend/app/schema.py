@@ -16,6 +16,7 @@ bool        checkbox
 points      list of [x, y] pairs
 iconlist    list of mdi icon names
 plotdata    list of {entity, color, width, ...} objects
+object      nested option object (plot axes / legends), `None` = off
 """
 
 from __future__ import annotations
@@ -56,6 +57,20 @@ VISIBLE = {
 
 POSITION_GROUP = "Position"
 STYLE_GROUP = "Style"
+AXES_GROUP = "Axes & legends"
+
+# `corners` accepts "all" or a comma separated list of corners.
+CORNERS = [
+    "all",
+    "top_left,top_right",
+    "bottom_left,bottom_right",
+    "top_left,bottom_left",
+    "top_right,bottom_right",
+    "top_left",
+    "top_right",
+    "bottom_left",
+    "bottom_right",
+]
 
 
 def _num(key: str, label: str, default: Any = None, *, group: str = POSITION_GROUP,
@@ -104,6 +119,20 @@ def _bool(key: str, label: str, default: bool = False, *,
     return {"key": key, "label": label, "kind": "bool", "default": default, "group": group}
 
 
+def _object(key: str, label: str, emit_key: str, fields: list[dict], *,
+            group: str = AXES_GROUP) -> dict:
+    """A nested option object such as a plot axis.
+
+    The value is `None` (switched off, omitted) or a dict of sub-properties.
+    Home Assistant treats an empty dict as off too, so `emit_key` is emitted
+    when every sub-property is at its default.
+    """
+    return {
+        "key": key, "label": label, "kind": "object", "default": None,
+        "group": group, "fields": fields, "emit_key": emit_key,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Element types
 # ---------------------------------------------------------------------------
@@ -129,6 +158,8 @@ ELEMENT_TYPES: list[dict] = [
             _num("stroke_width", "Stroke width", 0, group="Advanced", min=0),
             _color("stroke_fill", "Stroke color", "white", group="Advanced"),
             _num("y_padding", "Y padding", 10, group="Advanced"),
+            _select("align", "Align lines", ["left", "center", "right"], "left",
+                    group="Advanced"),
             _bool("parse_colors", "Parse [color] markup"),
             _bool("truncate", "Truncate with ellipsis"),
             VISIBLE,
@@ -151,6 +182,8 @@ ELEMENT_TYPES: list[dict] = [
             _num("size", "Font size", 20, group=STYLE_GROUP, min=1),
             _select("font", "Font", FONTS, "ppb.ttf"),
             _color("color", "Color", "black"),
+            # HA anchors every line at "lm" (left-middle) unless told otherwise.
+            _select("anchor", "Anchor", ANCHORS, "lm"),
             _num("spacing", "Extra spacing", 0, group="Advanced"),
             _bool("parse_colors", "Parse [color] markup"),
             VISIBLE,
@@ -268,8 +301,7 @@ ELEMENT_TYPES: list[dict] = [
             _color("outline", "Outline", "black"),
             _num("width", "Border width", 1, group=STYLE_GROUP, min=0),
             _num("radius", "Corner radius", 0, group=STYLE_GROUP, min=0),
-            _select("corners", "Rounded corners",
-                    ["all", "top_left", "top_right", "bottom_left", "bottom_right"], "all"),
+            _select("corners", "Rounded corners", CORNERS, "all"),
             VISIBLE,
         ],
     },
@@ -294,6 +326,8 @@ ELEMENT_TYPES: list[dict] = [
             _color("fill", "Fill", None, allow_none=True),
             _color("outline", "Outline", "black"),
             _num("width", "Border width", 1, group=STYLE_GROUP, min=0),
+            _num("radius", "Corner radius", 0, group=STYLE_GROUP, min=0),
+            _select("corners", "Rounded corners", CORNERS, "all"),
             VISIBLE,
         ],
     },
@@ -411,6 +445,44 @@ ELEMENT_TYPES: list[dict] = [
             _num("size", "Font size", 10, group=STYLE_GROUP, min=1),
             _bool("round_values", "Round values"),
             _bool("debug", "Debug borders"),
+            _object("ylegend", "Y legend", "position", [
+                _num("width", "Width (-1 = auto)", -1, group=AXES_GROUP),
+                _color("color", "Color", "black", group=AXES_GROUP),
+                _select("position", "Position", ["left", "right"], "left", group=AXES_GROUP),
+                _num("size", "Font size", 10, group=AXES_GROUP, min=1),
+            ]),
+            _object("yaxis", "Y axis", "width", [
+                _num("width", "Line width", 1, group=AXES_GROUP, min=0),
+                _color("color", "Color", "black", group=AXES_GROUP),
+                _num("tick_length", "Tick length", 4, group=AXES_GROUP, min=0),
+                _num("tick_width", "Tick width", 2, group=AXES_GROUP, min=0),
+                _num("tick_every", "Tick every", 1, group=AXES_GROUP, step=0.1),
+                _bool("grid", "Grid", True, group=AXES_GROUP),
+                _color("grid_color", "Grid color", "black", group=AXES_GROUP),
+                _select("grid_style", "Grid style", ["dotted", "dashed", "lines"], "dotted",
+                        group=AXES_GROUP),
+            ]),
+            _object("xlegend", "X legend (time labels)", "position", [
+                _text("format", "Time format", "%H:%M", group=AXES_GROUP, template=False,
+                      help="Python strftime format, e.g. %H:%M"),
+                _num("interval", "Interval (s)", None, group=AXES_GROUP, min=1,
+                     help="Empty = a quarter of the duration"),
+                _bool("snap_to_hours", "Snap to hours", True, group=AXES_GROUP),
+                _num("size", "Font size", 10, group=AXES_GROUP, min=1),
+                _select("position", "Position", ["bottom", "top"], "bottom", group=AXES_GROUP),
+                _color("color", "Color", "black", group=AXES_GROUP),
+                _num("height", "Height (-1 = auto, 0 = hidden)", -1, group=AXES_GROUP),
+            ]),
+            _object("xaxis", "X axis", "width", [
+                _num("width", "Line width", 1, group=AXES_GROUP, min=0),
+                _color("color", "Color", "black", group=AXES_GROUP),
+                _num("tick_length", "Tick length", 4, group=AXES_GROUP, min=0),
+                _num("tick_width", "Tick width", 2, group=AXES_GROUP, min=0),
+                _bool("grid", "Grid", True, group=AXES_GROUP),
+                _color("grid_color", "Grid color", "black", group=AXES_GROUP),
+                _select("grid_style", "Grid style", ["dotted", "dashed", "lines"], "dotted",
+                        group=AXES_GROUP),
+            ]),
             VISIBLE,
         ],
     },

@@ -1,7 +1,8 @@
 // Canvas: renders the display, handles drag & drop, selection, move and resize.
 
 import {
-  state, setState, createElement, createGroup, findNode, removeNode, emit, typeSpec,
+  state, setState, createElement, createGroup, findNode, findParent, removeNode, emit, typeSpec,
+  uid,
 } from './state.js';
 import { boundsOf, applyBounds, snapValue, buildPreviewContext, resolveProps } from './geometry.js';
 import { renderElementContent, elementLabel } from './renderer.js';
@@ -189,32 +190,39 @@ function isDynamic(value) {
  * Home Assistant owns its final position.
  */
 function computePreviewLayout(project) {
-  const baseCtx = buildPreviewContext(project);
+  layoutGroups(project.nodes, buildPreviewContext(project));
+}
 
-  for (const node of project.nodes) {
+// Groups can be nested; every loop level pins its own variable to 0 and sees
+// the variables of the loops around it.
+function layoutGroups(nodes, parentCtx) {
+  for (const node of nodes) {
     if (node.kind !== 'group') continue;
 
-    const repeatVar = node.repeat?.var || 'i';
-    const ctx = { ...baseCtx, [repeatVar]: 0 };
+    const ctx = { ...parentCtx };
+    if (node.repeat?.enabled !== false) {
+      const repeatVar = String(node.repeat?.var || 'i').trim() || 'i';
+      ctx[repeatVar] = 0;
 
-    // `{% set %}` statements run before the loop body.
-    for (const statement of node.repeat?.pre || []) {
-      const match = String(statement).match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/);
-      if (!match) continue;
-      const [, name, expr] = match;
-      try {
-        const parsed = JSON.parse(expr);
-        if (Array.isArray(parsed)) ctx[name] = parsed;
-      } catch { /* not a literal list */ }
+      // `{% set %}` statements run before the loop body.
+      for (const statement of node.repeat?.pre || []) {
+        const match = String(statement).match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/);
+        if (!match) continue;
+        const [, name, expr] = match;
+        try {
+          const parsed = JSON.parse(expr);
+          if (Array.isArray(parsed)) ctx[name] = parsed;
+        } catch { /* not a literal list */ }
+      }
     }
 
-    node.__resolvedGroup = true;
     for (const child of node.children || []) {
       if (child.kind === 'group') continue;
       child.__resolvedProps = resolveProps(child.props, ctx);
       child.__display = null;
       child.__approximate = childHasUnresolvedGeometry(child);
     }
+    layoutGroups(node.children || [], ctx);
   }
 }
 
@@ -279,7 +287,7 @@ function buildElementNode(node, index) {
 
 function groupBounds(group) {
   const boxes = (group.children || [])
-    .map((child) => child.__display || boundsOf(child))
+    .map((child) => (child.kind === 'group' ? groupBounds(child) : child.__display || boundsOf(child)))
     .filter(Boolean);
   if (!boxes.length) return { x: 0, y: 0, w: 40, h: 40 };
   const minX = Math.min(...boxes.map((b) => b.x));
@@ -316,9 +324,7 @@ function startDrag(event, node, mode) {
 
 function collectTargets(node) {
   if (node.kind === 'group') {
-    return (node.children || []).filter(
-      (child) => child.kind !== 'group' && !child.__approximate,
-    );
+    return (node.children || []).flatMap((child) => collectTargets(child));
   }
   return node.__approximate ? [] : [node];
 }
@@ -395,13 +401,23 @@ export function deleteSelected() {
 export function duplicateSelected() {
   const node = state.selection ? findNode(state.selection) : null;
   if (!node) return;
-  const clone = JSON.parse(JSON.stringify(node));
-  clone.id = `${node.id}-copy-${Math.random().toString(36).slice(2, 6)}`;
+  const clone = JSON.parse(JSON.stringify(node, (key, value) =>
+    (key.startsWith('__') ? undefined : value)));
+  // Every node in the copy needs a fresh id, children included: duplicate ids
+  // make selection and the layer tree act on the wrong node.
+  const reId = (item) => {
+    item.id = uid(item.kind === 'group' ? 'grp' : 'el');
+    (item.children || []).forEach(reId);
+  };
+  reId(clone);
   if (clone.kind !== 'group') {
     const box = boundsOf(node);
     applyBounds(clone, { x: box.x + 10, y: box.y + 10, w: box.w, h: box.h });
   }
-  state.project.nodes.push(clone);
+  // The copy goes right above the original, in the same parent.
+  const location = findParent(node.id);
+  const siblings = location ? location.list : state.project.nodes;
+  siblings.splice(location ? location.index + 1 : siblings.length, 0, clone);
   setState({ selection: clone.id, dirty: true }, 'structure');
   render();
 }
