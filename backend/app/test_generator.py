@@ -23,6 +23,8 @@ def _context() -> dict:
         "nadpisy": ["A", "B", "C", "D"],
         "offset_0": 110, "offset_1": 130, "offset_2": 150,
         "offset_3": 170, "offset_4": 190, "offset_5": 210,
+        "n": 3,
+        "spacing": 7,
     }
 
 
@@ -185,6 +187,96 @@ def test_number_types_are_numeric() -> None:
     assert payload[0]["y"] == 7.5 and isinstance(payload[0]["y"], float)
     # size matches the default and is therefore omitted.
     assert "size" not in payload[0], payload[0]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: inputs that used to emit invalid JSON
+# ---------------------------------------------------------------------------
+
+def _text(**props: object) -> dict:
+    """A text element with the required props filled in."""
+    return {"kind": "element", "type": "text", "props": {"value": "A", "x": 1, "y": 1, **props}}
+
+
+def _group(children: list, **repeat: object) -> dict:
+    return {
+        "kind": "group",
+        "repeat": {"enabled": True, "var": "i", "count": 2, "pre": [], **repeat},
+        "children": children,
+    }
+
+
+def _project(*nodes: dict) -> dict:
+    return {"name": "R", "width": 296, "height": 128, "variables": [], "nodes": list(nodes)}
+
+
+def test_hidden_first_child_of_first_group() -> None:
+    """A skipped child must not leave the comma slot filled behind it."""
+    payload = _render(generate_template(
+        _project(_group([_text(visible=False), _text(value="B")]))
+    ))
+    assert [item["value"] for item in payload] == ["B", "B"], payload
+
+
+def test_group_with_only_hidden_children_is_dropped() -> None:
+    """An empty group must not make the next node emit a leading comma."""
+    payload = _render(generate_template(
+        _project(_group([_text(visible=False)]), _text(value="C"))
+    ))
+    assert [item["value"] for item in payload] == ["C"], payload
+
+
+def test_zero_iteration_group_is_dropped() -> None:
+    payload = _render(generate_template(
+        _project(_group([_text()], count=0), _text(value="D"))
+    ))
+    assert [item["value"] for item in payload] == ["D"], payload
+
+
+def test_disabled_group_skips_hidden_children() -> None:
+    payload = _render(generate_template(
+        _project(_group([_text(visible=False), _text(value="F")], enabled=False))
+    ))
+    assert [item["value"] for item in payload] == ["F"], payload
+
+
+def test_quotes_in_template_values() -> None:
+    """A quote in the literal part of a template value must be escaped..."""
+    payload = _render(generate_template(_project(_text(value='{{ n }} 5" panel'))))
+    assert payload[0]["value"] == '3 5" panel', payload
+
+
+def test_quotes_inside_jinja_expression_survive() -> None:
+    """...but a quote inside `{{ … }}` must be left alone, or Jinja breaks."""
+    payload = _render(generate_template(_project(_text(value='{{ states("sensor.x") }}'))))
+    assert payload[0]["value"] == "42", payload
+
+
+def test_bare_expression_in_number_field() -> None:
+    """A bare expression is wrapped in `{{ }}` rather than emitted raw."""
+    payload = _render(generate_template(_project(_text(x="spacing"))))
+    assert payload[0]["x"] == 7, payload
+
+
+def test_dynamic_iteration_count() -> None:
+    """A Jinja iteration count falls back to the runtime comma guard."""
+    payload = _render(generate_template(
+        _project(_group([_text()], count="{{ n }}"), _text(value="E"))
+    ))
+    assert [item["value"] for item in payload] == ["A", "A", "A", "E"], payload
+
+
+def test_dynamic_iteration_count_of_zero() -> None:
+    """Same template, but the loop produces nothing at render time."""
+    project = _project(_group([_text()], count="{{ n - 3 }}"), _text(value="E"))
+    payload = _render(generate_template(project))
+    assert [item["value"] for item in payload] == ["E"], payload
+
+
+def test_static_output_has_no_runtime_guard() -> None:
+    """The guard is only paid for when an iteration count is dynamic."""
+    static = generate_template(_weather_project())
+    assert "namespace(first=true)" not in static, static
 
 
 def _run() -> None:
