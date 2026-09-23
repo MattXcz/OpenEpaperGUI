@@ -138,9 +138,8 @@ function buildLayer(node, siblings) {
   }
 
   row.addEventListener('click', () => {
-    setState({ selection: node.id });
-    render();
-    renderLayers();
+    // 'structure' so the Inspector picks up the new selection too.
+    setState({ selection: node.id }, 'structure');
   });
   wrap.appendChild(row);
 

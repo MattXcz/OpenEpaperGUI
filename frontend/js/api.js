@@ -36,6 +36,10 @@ export const api = {
     method: 'POST', body: JSON.stringify(project),
   }),
 
+  validate: (project) => request('/api/validate', {
+    method: 'POST', body: JSON.stringify(project),
+  }),
+
   getSettings: () => request('/api/settings'),
   saveSettings: (settings) => request('/api/settings', {
     method: 'POST', body: JSON.stringify(settings),

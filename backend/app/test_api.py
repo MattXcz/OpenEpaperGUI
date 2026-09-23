@@ -145,12 +145,19 @@ def test_push_sends_service_options() -> None:
     client = _fresh()
     client.post("/api/settings", json={"haUrl": "http://ha.local", "haToken": "t"})
     calls = []
+    rendered = []
+
+    async def fake_render(self, template):
+        rendered.append(template)
+        return '[{"type": "circle", "x": 1, "y": 2, "radius": 3}]'
 
     async def fake_call(self, domain, service, data):
         calls.append((domain, service, data))
         return []
 
+    original_render = main.HomeAssistantClient.render_template
     original = main.HomeAssistantClient.call_service
+    main.HomeAssistantClient.render_template = fake_render
     main.HomeAssistantClient.call_service = fake_call
     try:
         response = client.post("/api/ha/push", json={
@@ -163,10 +170,100 @@ def test_push_sends_service_options() -> None:
         data = calls[1][2]
         assert (data["rotate"], data["dither"], data["ttl"]) == (0, 2, 60), data
     finally:
+        main.HomeAssistantClient.render_template = original_render
         main.HomeAssistantClient.call_service = original
     assert client.post("/api/ha/push", json={
         "project": {"rotate": 45}, "deviceId": "abc",
     }).status_code == 422
+
+
+def test_push_renders_before_sending() -> None:
+    """The integration never renders Jinja, so the payload must arrive as a list."""
+    client = _fresh()
+    client.post("/api/settings", json={"haUrl": "http://ha.local", "haToken": "t"})
+    sent = []
+    templates = []
+
+    async def fake_render(self, template):
+        templates.append(template)
+        return '[{"type": "text", "value": "hi", "x": 0, "y": 0}]'
+
+    async def fake_call(self, domain, service, data):
+        sent.append(data)
+        return []
+
+    original_render = main.HomeAssistantClient.render_template
+    original = main.HomeAssistantClient.call_service
+    main.HomeAssistantClient.render_template = fake_render
+    main.HomeAssistantClient.call_service = fake_call
+    try:
+        response = client.post("/api/ha/push", json={"project": {}, "deviceId": "abc"})
+        assert response.status_code == 200, response.text
+        assert templates and "{%" in templates[0] or "[" in templates[0]
+        # A list, not the raw template string.
+        assert isinstance(sent[0]["payload"], list), sent[0]["payload"]
+        assert sent[0]["payload"][0]["type"] == "text"
+        assert response.json()["elements"] == 1
+    finally:
+        main.HomeAssistantClient.render_template = original_render
+        main.HomeAssistantClient.call_service = original
+
+
+def test_push_rejects_unrenderable_template() -> None:
+    client = _fresh()
+    client.post("/api/settings", json={"haUrl": "http://ha.local", "haToken": "t"})
+    calls = []
+
+    async def fake_render(self, template):
+        return "not json at all"
+
+    async def fake_call(self, domain, service, data):
+        calls.append(data)
+        return []
+
+    original_render = main.HomeAssistantClient.render_template
+    original = main.HomeAssistantClient.call_service
+    main.HomeAssistantClient.render_template = fake_render
+    main.HomeAssistantClient.call_service = fake_call
+    try:
+        response = client.post("/api/ha/push", json={"project": {}, "deviceId": "abc"})
+        assert response.status_code == 400, response.text
+        assert "not render" in response.json()["detail"]
+        assert not calls, "nothing must be sent when the template is invalid"
+    finally:
+        main.HomeAssistantClient.render_template = original_render
+        main.HomeAssistantClient.call_service = original
+
+
+# ---------------------------------------------------------------------------
+# Validation endpoint
+# ---------------------------------------------------------------------------
+
+def test_validate_ok() -> None:
+    client = _fresh()
+    body = client.post("/api/validate", json={"nodes": [
+        {"kind": "element", "type": "circle", "props": {"x": 1, "y": 2, "radius": 3}},
+    ]}).json()
+    assert body["ok"] and body["stage"] == "ok", body
+    assert body["count"] == 1
+    assert "template" not in body, "the template is served by /api/generate/template"
+
+
+def test_validate_reports_element_problems() -> None:
+    """An emptied required field is omitted by the generator and must be caught."""
+    client = _fresh()
+    body = client.post("/api/validate", json={"nodes": [
+        {"kind": "element", "type": "line", "props": {"x_start": 0, "x_end": ""}},
+    ]}).json()
+    assert not body["ok"], body
+    assert body["stage"] == "elements", body
+    assert any("x_end" in issue for issue in body["issues"]), body
+
+
+def test_validate_skips_ha_when_unconfigured() -> None:
+    client = _fresh()
+    body = client.post("/api/validate", json={"nodes": []}).json()
+    assert body["ok"] and body["source"] == "local"
 
 
 def _run() -> None:

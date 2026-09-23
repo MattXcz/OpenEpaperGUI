@@ -22,6 +22,7 @@ from .generator import (
 )
 from .ha_client import HomeAssistantClient, HomeAssistantError
 from .schema import default_props, public_schema
+from .templating import payload_from_rendered, validate_project
 
 FRONTEND_DIR = Path(
     os.environ.get("FRONTEND_DIR")
@@ -213,6 +214,29 @@ async def generate_template_endpoint(project: Project) -> dict:
     }
 
 
+@app.post("/api/validate")
+async def validate_endpoint(project: Project) -> dict:
+    """Render the generated template and check the payload it produces.
+
+    Uses Home Assistant when it is reachable so the check reflects live entity
+    state, and falls back to a local sandbox otherwise. The response reports the
+    failing stage (render / parse / elements) plus an excerpt and a list of
+    per-element problems.
+    """
+    settings = storage.effective_settings()
+    client: HomeAssistantClient | None = None
+    if settings.get("haUrl") and settings.get("haToken"):
+        client = HomeAssistantClient(settings["haUrl"], settings["haToken"])
+
+    result = await validate_project(project.model_dump(), client)
+    # The template is large and already available from /api/generate/template.
+    result.pop("template", None)
+    if result.get("payload") is not None:
+        result["count"] = len(result["payload"])
+        result.pop("payload", None)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
@@ -278,9 +302,30 @@ async def ha_push(request: PushRequest) -> dict:
     project = request.project.model_dump()
     template = generate_template(project)
 
+    try:
+        client = HomeAssistantClient(settings["haUrl"], settings["haToken"])
+    except HomeAssistantError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # `imagegen/core.py` reads `payload` as a finished list of elements and never
+    # renders Jinja itself, and /api/services does not render templates inside
+    # `data` either. Rendering through Home Assistant first is therefore the only
+    # way the tag receives a usable payload.
+    try:
+        rendered = await client.render_template(template)
+    except HomeAssistantError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    payload, check = payload_from_rendered(rendered)
+    if payload is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Generated template did not render to a valid payload: {check['error']}",
+        )
+
     data = {
         "device_id": device_id,
-        "payload": template,
+        "payload": payload,
         "background": request.background or project.get("background", "white"),
         "rotate": project["rotate"],
         "dither": project["dither"],
@@ -290,12 +335,17 @@ async def ha_push(request: PushRequest) -> dict:
         data["dry-run"] = True
 
     try:
-        client = HomeAssistantClient(settings["haUrl"], settings["haToken"])
         result = await client.call_service(domain, service_name, data)
     except HomeAssistantError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
-    return {"ok": True, "service": service, "deviceId": device_id, "result": result}
+    return {
+        "ok": True,
+        "service": service,
+        "deviceId": device_id,
+        "elements": len(payload),
+        "result": result,
+    }
 
 
 # ---------------------------------------------------------------------------

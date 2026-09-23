@@ -554,6 +554,35 @@ code { font-family: var(--mono); background: var(--bg-elev-2); padding: 1px 4px;
   line-height: 1.4;
 }
 
+.code-status {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+}
+.code-status.is-ok { border-color: var(--success); background: rgba(62, 207, 142, 0.1); color: var(--success); }
+.code-status.is-error { border-color: var(--danger); background: rgba(255, 92, 92, 0.1); color: var(--danger); }
+.code-status.is-pending { border-color: var(--border-strong); }
+.code-status .status-head { font-weight: 600; }
+.code-status .status-detail { margin-top: 4px; color: var(--text-dim); }
+.code-status pre {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text);
+}
+.code-status ul { margin: 6px 0 0; padding-left: 18px; }
+.code-status li { margin-bottom: 2px; }
+
 .object-editor { display: flex; flex-direction: column; gap: 6px; }
 .object-fields {
   padding: 8px 0 0 10px;
