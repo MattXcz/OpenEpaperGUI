@@ -1,4 +1,6 @@
 # OpenEPaper GUI
+> [!WARNING]
+> This is early stage BETA - write an issue if any errors or problems occur.
 
 A self-hosted, browser-based **drag & drop editor** that generates
 [`drawcustom`](https://github.com/OpenEPaperLink/Home_Assistant_Integration/blob/main/docs/drawcustom/supported_types.md)
