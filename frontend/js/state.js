@@ -11,8 +11,6 @@ export const state = {
   snap: true,
   preview: false,
   codeMode: 'template',
-  // Accent color used by the pixel-accurate preview, matching the tag.
-  previewAccent: 'red',
   generated: { template: '', yaml: '', payload: [] },
   dirty: false,
   settings: { haUrl: '', deviceId: '', service: '', hasToken: false },
@@ -47,10 +45,6 @@ export function createProject(name = 'Untitled') {
     background: 'white',
     nodes: [],
     variables: [],
-    // drawcustom service options (see "Send to display").
-    rotate: 0,
-    dither: 2,
-    ttl: 60,
   };
 }
 

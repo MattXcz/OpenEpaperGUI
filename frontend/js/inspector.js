@@ -2,7 +2,6 @@
 
 import { state, setState, findNode, typeSpec, emit } from './state.js';
 import { render } from './canvas.js';
-import { resolveSwatch as sharedSwatch } from './theme.js';
 
 let container;
 let emptyState;
@@ -73,7 +72,6 @@ function buildHeader(node, spec) {
   const dup = document.createElement('button');
   dup.className = 'btn-icon';
   dup.title = 'Duplicate';
-  dup.setAttribute('aria-label', dup.title);
   dup.textContent = '⧉';
   dup.addEventListener('click', async () => {
     const { duplicateSelected } = await import('./canvas.js');
@@ -83,7 +81,6 @@ function buildHeader(node, spec) {
   const del = document.createElement('button');
   del.className = 'btn-icon';
   del.title = 'Delete';
-  del.setAttribute('aria-label', del.title);
   del.textContent = '🗑';
   del.addEventListener('click', async () => {
     const { deleteSelected } = await import('./canvas.js');
@@ -121,19 +118,9 @@ function buildGroupInspector(node) {
     node.repeat.var = value || 'i';
   }));
 
-  // A whole number (0 allowed) or a Jinja expression such as
-  // `forecast | length` / `{{ n }}`; the generator handles both.
-  const iterations = buildSimpleField('Iterations', 'text', node.repeat?.count ?? 1, (value) => {
-    const text = String(value).trim();
-    if (text === '') node.repeat.count = 1;
-    else if (/^\d+$/.test(text)) node.repeat.count = Number(text);
-    else node.repeat.count = text;
-  });
-  const help = document.createElement('div');
-  help.className = 'field-help';
-  help.innerHTML = 'A number, or a Jinja expression such as <code>forecast | length</code>.';
-  iterations.appendChild(help);
-  section.appendChild(iterations);
+  section.appendChild(buildSimpleField('Iterations', 'number', node.repeat?.count ?? 1, (value) => {
+    node.repeat.count = Math.max(1, parseInt(value, 10) || 1);
+  }));
 
   section.appendChild(buildSimpleField('Enabled', 'bool', node.repeat?.enabled !== false, (value) => {
     node.repeat.enabled = value;
@@ -246,9 +233,6 @@ function buildField(node, field) {
       break;
     case 'plotdata':
       wrap.appendChild(plotDataInput(value, field, setValue));
-      break;
-    case 'object':
-      wrap.appendChild(objectInput(node, field));
       break;
     default:
       wrap.appendChild(textInput(value, field, setValue));
@@ -364,7 +348,13 @@ function colorInput(value, field, setValue) {
 }
 
 function resolveSwatch(value) {
-  return sharedSwatch(value);
+  const map = {
+    black: '#000', white: '#fff', red: '#e02020', yellow: '#e8c000', accent: '#e02020',
+    half_black: '#808080', half_white: '#c0c0c0', half_red: '#f09090',
+    half_yellow: '#f4e090', half_accent: '#f09090',
+  };
+  const key = String(value).toLowerCase();
+  return map[key] || key;
 }
 
 function selectInput(value, field, setValue) {
@@ -554,51 +544,6 @@ function plotDataInput(value, field, setValue) {
 
   rebuild();
   return wrap;
-}
-
-// A nested option object (plot axes / legends): `null` = off, otherwise a dict
-// of sub-properties edited with the regular field editors.
-function objectInput(node, field) {
-  const box = document.createElement('div');
-  box.className = 'object-editor';
-
-  const row = document.createElement('label');
-  row.className = 'checkbox-row';
-  const toggle = document.createElement('input');
-  toggle.type = 'checkbox';
-  toggle.checked = isPlainObject(node.props[field.key]);
-  row.append(toggle, document.createTextNode(`Show ${field.label.toLowerCase()}`));
-  box.appendChild(row);
-
-  const body = document.createElement('div');
-  body.className = 'object-fields';
-  box.appendChild(body);
-
-  const paint = () => {
-    body.innerHTML = '';
-    const value = node.props[field.key];
-    body.hidden = !isPlainObject(value);
-    if (!isPlainObject(value)) return;
-    // The sub-editors write straight into this dict through a stand-in node.
-    const proxy = { props: value };
-    for (const sub of field.fields || []) {
-      if (!(sub.key in value)) value[sub.key] = sub.default ?? null;
-      body.appendChild(buildField(proxy, sub));
-    }
-  };
-
-  toggle.addEventListener('change', () => {
-    node.props[field.key] = toggle.checked ? {} : null;
-    paint();
-    markDirty();
-  });
-
-  paint();
-  return box;
-}
-
-function isPlainObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function markDirty() {

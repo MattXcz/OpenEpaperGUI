@@ -55,7 +55,6 @@ export function renderVariables() {
     del.className = 'btn-icon';
     del.textContent = '✕';
     del.title = 'Remove';
-    del.setAttribute('aria-label', del.title);
     del.addEventListener('click', () => {
       variables.splice(index, 1);
       setState({ dirty: true }, 'structure');

@@ -70,15 +70,3 @@ class HomeAssistantClient:
             return response.json()
         except ValueError:
             return []
-
-    async def render_template(self, template: str) -> str:
-        """Render a Jinja template through Home Assistant.
-
-        ``POST /api/template`` returns rendered text, so this is the only way to
-        evaluate a template against live entity state. The REST service
-        endpoint does not do it for templates inside ``data``.
-        """
-        response = await self._request(
-            "POST", "/api/template", json={"template": template}
-        )
-        return response.text

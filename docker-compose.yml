@@ -13,10 +13,6 @@ services:
       HA_TOKEN: "${HA_TOKEN:-}"
       # --- Storage ---
       DATA_DIR: "/data"
-      # --- Security (see README > Security) ---
-      CORS_ORIGINS: "${CORS_ORIGINS:-}"
-      ALLOWED_HOSTS: "${ALLOWED_HOSTS:-}"
-      ALLOWED_SERVICE_DOMAINS: "${ALLOWED_SERVICE_DOMAINS:-}"
       # --- Misc ---
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     volumes:

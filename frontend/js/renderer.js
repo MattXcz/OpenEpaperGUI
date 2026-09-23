@@ -2,7 +2,19 @@
 
 import { boundsOf } from './geometry.js';
 import { typeSpec } from './state.js';
-import { resolveColor } from './theme.js';
+
+const COLOR_MAP = {
+  black: '#000000',
+  white: '#ffffff',
+  red: '#e02020',
+  yellow: '#e8c000',
+  accent: '#e02020',
+  half_black: '#808080',
+  half_white: '#c0c0c0',
+  half_red: '#f09090',
+  half_yellow: '#f4e090',
+  half_accent: '#f09090',
+};
 
 // The MDI webfont glyphs are optional; when it is missing we fall back to a
 // simple placeholder so the canvas still communicates the layout.
@@ -35,6 +47,19 @@ function iconHtml(name, color, size) {
   return `<span title="${safe}" style="display:grid;place-items:center;width:100%;height:100%;
     font-family:var(--mono);font-size:${Math.max(8, size * 0.5)}px;color:${color};
     border:1px dashed currentColor;border-radius:3px;box-sizing:border-box;overflow:hidden;">${safe.slice(0, 3)}</span>`;
+}
+
+export function resolveColor(value, fallback = '#000000') {
+  if (!value) return fallback;
+  const key = String(value).toLowerCase();
+  if (COLOR_MAP[key]) return COLOR_MAP[key];
+  if (/^#[0-9a-f]{3}$/i.test(key) || /^#[0-9a-f]{6}$/i.test(key)) return key;
+  if (key === 'b') return '#000000';
+  if (key === 'w') return '#ffffff';
+  if (key === 'r') return '#e02020';
+  if (key === 'y') return '#e8c000';
+  if (key === 'a') return '#e02020';
+  return fallback;
 }
 
 function escapeHtml(text) {
@@ -71,24 +96,19 @@ export function renderElementContent(node) {
       const color = resolveColor(p.color, '#000');
       const size = Number(p.size) || 20;
       const weight = p.stroke_width ? 'bold' : 'normal';
-      const align = ['left', 'center', 'right'].includes(p.align) ? p.align : 'left';
-      return `<div class="el-text" style="font-size:${size}px;color:${color};font-weight:${weight};white-space:pre-wrap;text-align:${align};">${escapeHtml(text)}</div>`;
+      return `<div class="el-text" style="font-size:${size}px;color:${color};font-weight:${weight};white-space:pre-wrap;">${escapeHtml(text)}</div>`;
     }
 
     case 'multiline': {
-      // Same split as HA: newlines are dropped, then the delimiter splits.
-      const delimiter = String(p.delimiter ?? '');
-      let text = String(p.value ?? '').replace(/\n/g, '');
+      const delimiter = p.delimiter || '|';
+      let text = String(p.value ?? '');
       if (p.parse_colors) text = stripColorMarkup(text);
-      const lines = delimiter ? text.split(delimiter) : [text];
+      const lines = text.split(delimiter);
       const color = resolveColor(p.color, '#000');
       const size = Number(p.size) || 20;
       const offset = Number(p.offset_y) || 20;
-      // Every line is anchored on its own, so a middle/right anchor centres or
-      // right-aligns each line individually.
-      const align = { m: 'center', r: 'right' }[String(p.anchor || 'lm')[0]] || 'left';
       const html = lines
-        .map((line, index) => `<div style="position:absolute;top:${index * offset}px;left:0;right:0;white-space:pre;text-align:${align};">${escapeHtml(line)}</div>`)
+        .map((line, index) => `<div style="position:absolute;top:${index * offset}px;left:0;white-space:pre;">${escapeHtml(line)}</div>`)
         .join('');
       return `<div class="el-text" style="font-size:${size}px;color:${color};position:relative;">${html}</div>`;
     }
@@ -164,7 +184,6 @@ export function renderElementContent(node) {
       const ySize = Number(p.y_size) || 10;
       const xOffset = Number(p.x_offset) || 0;
       const yOffset = Number(p.y_offset) || 0;
-      const radius = Number(p.radius) || 0;
       const totalW = xRepeat * xSize + (xRepeat - 1) * xOffset;
       const totalH = yRepeat * ySize + (yRepeat - 1) * yOffset;
       let rects = '';
@@ -172,7 +191,7 @@ export function renderElementContent(node) {
         for (let col = 0; col < xRepeat; col += 1) {
           const x = col * (xSize + xOffset);
           const y = row * (ySize + yOffset);
-          rects += `<rect x="${x}" y="${y}" width="${xSize}" height="${ySize}" rx="${radius}" ry="${radius}" fill="${fill}" stroke="${outline}" stroke-width="${width}" />`;
+          rects += `<rect x="${x}" y="${y}" width="${xSize}" height="${ySize}" fill="${fill}" stroke="${outline}" stroke-width="${width}" />`;
         }
       }
       return `<svg class="el-shape" viewBox="0 0 ${totalW} ${totalH}" preserveAspectRatio="none">${rects}</svg>`;

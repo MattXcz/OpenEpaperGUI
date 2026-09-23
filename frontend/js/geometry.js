@@ -1,7 +1,10 @@
 // Derives a bounding box (in display pixels) for every element type.
 // The box is what the canvas uses for hit-testing, dragging and resizing.
 
-import { state, typeSpec } from './state.js';
+import { typeSpec } from './state.js';
+
+const CHAR_WIDTH = 0.58;   // monospace-ish advance per font-size unit
+const LINE_HEIGHT = 1.25;
 
 /**
  * Builds the variable context used to preview Jinja expressions.
@@ -103,72 +106,16 @@ function num(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-// drawcustom accepts positions as a percentage of the canvas, e.g. "50%".
-function coord(value, extent) {
-  if (typeof value === 'string' && /^\s*-?\d+(\.\d+)?%\s*$/.test(value)) {
-    return (parseFloat(value) / 100) * extent;
-  }
-  return num(value);
-}
-const cx = (value) => coord(value, state.project?.width || 0);
-const cy = (value) => coord(value, state.project?.height || 0);
-
-// Pillow text anchors: horizontal l/m/r, vertical a/t (top), m, s/b/d (bottom).
-// Returns the fraction of the box that lies left of / above the anchor point.
-function anchorFactors(anchor) {
-  const a = String(anchor || '').toLowerCase();
-  const fx = { l: 0, m: 0.5, r: 1 }[a[0]] ?? 0;
-  const fy = { a: 0, t: 0, m: 0.5, s: 1, b: 1, d: 1 }[a[1]] ?? 0;
-  return [fx, fy];
-}
-
-// Top-left corner of a box of size w×h whose anchor sits at (x, y).
-// `anchorH` is the height the vertical anchor refers to: the whole box, or a
-// single line for `multiline`, where HA anchors every line on its own.
-function anchored(p, x, y, w, h, anchorH = h) {
-  const [fx, fy] = anchorFactors(p.anchor);
-  return { x: x - w * fx, y: y - anchorH * fy, w, h };
-}
-
-// Inverse of `anchored`: where the anchor point of `box` lies.
-function anchorPoint(p, box, anchorH = box.h) {
-  const [fx, fy] = anchorFactors(p.anchor);
-  return { x: Math.round(box.x + box.w * fx), y: Math.round(box.y + anchorH * fy) };
-}
-
-// Lines of a text element; `multiline` drops newlines and splits on the
-// delimiter, exactly like the HA image generator.
-function textLines(p, g) {
-  const text = String(p[g.text] ?? '');
-  if (g.split) {
-    const delimiter = String(p[g.split] ?? '');
-    const flat = text.replace(/\n/g, '');
-    return delimiter ? flat.split(delimiter) : [flat];
-  }
-  return text.split('\n');
-}
-
 function propsOf(node) {
   return node.__resolvedProps || node.props || {};
 }
 
-// Text metrics come from the element's geometry block in schema.py, so the
-// editor and the generator describe text sizing in exactly one place. The
-// fallbacks only apply to element types that carry no metrics.
-function charWidthOf(g) {
-  return num(g?.char_width, 0.58);
-}
-
-function lineHeightOf(g) {
-  return num(g?.line_height, 1.25);
-}
-
-function textSize(text, size, g) {
+function textSize(text, size) {
   const lines = String(text ?? '').split('\n');
   const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
   return {
-    w: Math.max(4, longest * size * charWidthOf(g)),
-    h: Math.max(4, lines.length * size * lineHeightOf(g)),
+    w: Math.max(4, longest * size * CHAR_WIDTH),
+    h: Math.max(4, lines.length * size * LINE_HEIGHT),
   };
 }
 
@@ -184,8 +131,8 @@ export function boundsOf(node) {
 
   switch (g.kind) {
     case 'point': {
-      const x = cx(p[g.x]);
-      const y = cy(p[g.y]);
+      const x = num(p[g.x]);
+      const y = num(p[g.y]);
 
       if (g.radius) {
         const r = num(p[g.radius], 10);
@@ -210,30 +157,32 @@ export function boundsOf(node) {
         const total = count * size + (count - 1) * spacing;
         const horizontal = (p.direction || 'right') === 'right' || (p.direction || 'right') === 'left';
         return horizontal
-          ? anchored(p, x, y, total, size)
-          : anchored(p, x, y, size, total);
+          ? { x, y, w: total, h: size }
+          : { x, y, w: size, h: total };
       }
       if (g.square) {
         const size = num(p.size, 24);
-        return anchored(p, x, y, size, size);
+        return { x, y, w: size, h: size };
       }
       // text / multiline
       const size = num(p.size, 20);
-      const lines = textLines(p, g);
-      const measured = textSize(lines.join('\n'), size, g);
-      if (g.line_step) {
-        const lineH = size * lineHeightOf(g);
-        measured.h = (lines.length - 1) * num(p[g.line_step], 20) + lineH;
-        return anchored(p, x, y, measured.w, measured.h, lineH);
+      let text = String(p[g.text] ?? '');
+      if (g.split && p[g.split]) {
+        text = text.split(String(p[g.split])).join('\n');
       }
-      return anchored(p, x, y, measured.w, measured.h);
+      const measured = textSize(text, size);
+      if (g.line_step && text.includes('\n')) {
+        const lines = text.split('\n').length;
+        measured.h = (lines - 1) * num(p[g.line_step], 20) + size * LINE_HEIGHT;
+      }
+      return { x, y, w: measured.w, h: measured.h };
     }
 
     case 'box': {
-      const x1 = cx(p[g.x_start]);
-      const y1 = cy(p[g.y_start]);
-      const x2 = cx(p[g.x_end]);
-      const y2 = cy(p[g.y_end]);
+      const x1 = num(p[g.x_start]);
+      const y1 = num(p[g.y_start]);
+      const x2 = num(p[g.x_end]);
+      const y2 = num(p[g.y_end]);
       const left = Math.min(x1, x2);
       const top = Math.min(y1, y2);
       const w = Math.abs(x2 - x1);
@@ -245,8 +194,8 @@ export function boundsOf(node) {
     }
 
     case 'pattern': {
-      const xStart = cx(p[g.x_start]);
-      const yStart = cy(p[g.y_start]);
+      const xStart = num(p[g.x_start]);
+      const yStart = num(p[g.y_start]);
       const xSize = num(p[g.x_size], 10);
       const ySize = num(p[g.y_size], 10);
       const xOffset = num(p[g.x_offset]);
@@ -324,24 +273,25 @@ export function applyBounds(node, box, mode = 'move') {
       const total = horizontal ? box.w : box.h;
       const size = Math.max(1, Math.round((total - (count - 1) * (num(p.spacing) || 0)) / count));
       p[g.size] = size;
-      Object.assign(p, keyed(g, anchorPoint(p, box)));
+      p[g.x] = Math.round(box.x);
+      p[g.y] = Math.round(box.y);
       return;
     }
     if (g.square) {
       const size = Math.max(1, Math.round(Math.max(box.w, box.h)));
       p[g.size] = size;
-      Object.assign(p, keyed(g, anchorPoint(p, { ...box, w: size, h: size })));
+      p[g.x] = Math.round(box.x);
+      p[g.y] = Math.round(box.y);
       return;
     }
     // text / multiline
-    const lines = textLines(p, g).length;
-    const step = g.line_step ? num(p[g.line_step], 20) : 0;
     if (mode === 'resize') {
-      const textH = g.line_step ? box.h - (lines - 1) * step : box.h / lines;
-      p[g.size] = Math.max(1, Math.round(textH / lineHeightOf(g)));
+      const lines = String(p[g.text] ?? '').split('\n').length;
+      const size = Math.max(1, Math.round(box.h / (lines * LINE_HEIGHT)));
+      p[g.size] = size;
     }
-    const lineH = g.line_step ? num(p.size, 20) * lineHeightOf(g) : box.h;
-    Object.assign(p, keyed(g, anchorPoint(p, box, lineH)));
+    p[g.x] = Math.round(box.x);
+    p[g.y] = Math.round(box.y);
     return;
   }
 
@@ -380,10 +330,6 @@ export function applyBounds(node, box, mode = 'move') {
       Math.round(box.y + (num(pt[1]) - current.y) * sy),
     ]);
   }
-}
-
-function keyed(g, point) {
-  return { [g.x]: point.x, [g.y]: point.y };
 }
 
 export function snapValue(value, enabled, step = 2) {

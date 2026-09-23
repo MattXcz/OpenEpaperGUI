@@ -90,14 +90,10 @@ variables in `.env`:
 | `LOG_LEVEL` | `info` | uvicorn log level |
 | `DATA_DIR` | `/data` | Where projects and settings are stored |
 | `CORS_ORIGINS` | – | Extra browser origins allowed to call the API, comma separated |
-| `ALLOWED_HOSTS` | – | Extra hostnames the editor answers to, e.g. `epaper.example.com`, `*.example.com`; `*` disables the check |
-| `ALLOWED_SERVICE_DOMAINS` | `open_epaper_link` | Home Assistant service domains *Send to display* may call |
 
 Create a token in Home Assistant under **Profile → Security → Long-lived access
-tokens**. Values saved in the UI take precedence over environment variables.
-The token is bound to the URL it belongs to: `HA_TOKEN` is only sent to
-`HA_URL`, and changing the URL in the UI discards the saved token, so enter the
-token again together with a new URL.
+tokens**. Values saved in the UI take precedence over environment variables,
+except that the environment token is used when none is saved.
 
 ---
 
@@ -113,8 +109,7 @@ token again together with a new URL.
 | Resize | Drag the corner / edge handles |
 | Duplicate | `Ctrl`/`Cmd` + `D` |
 | Delete | `Delete` / `Backspace` |
-| Centre horizontally | `C` (without modifiers) |
-| Save now | `Ctrl`/`Cmd` + `S` |
+| Centre horizontally | `C` |
 | Deselect | `Esc` |
 
 Toggle **Grid** and **Snap** in the toolbar. **Preview** hides the selection
@@ -123,10 +118,8 @@ chrome so you see the design as it will render.
 ### Display resolution
 
 Pick a preset (2.9", 2.13", 4.2", 7.5" …) or enter a custom width/height. The
-canvas resizes immediately and coordinates are in display pixels, so the
-generated payload matches the target panel. Position fields also accept
-percentages of the canvas (`50%`), as `drawcustom` does; together with an
-`anchor` such as `mm` this centres an element.
+canvas resizes immediately and coordinates are always in display pixels, so the
+generated payload matches the target panel.
 
 ### Element types
 
@@ -140,25 +133,13 @@ All types from the `drawcustom` documentation are supported:
 | Utility | `debug_grid` |
 
 Every documented property is exposed in the Inspector, grouped into
-**Content / Position / Style / Advanced** — including the plot's
-`ylegend` / `yaxis` / `xlegend` / `xaxis` options under **Axes & legends**
-(tick a box to switch one on).
-
-Where the OpenEPaperLink image generator derives a default from other
-properties, the editor follows it: `multiline` anchors every line at `lm`
-(left-middle), a multi-line or wrapped `text` gets an explicit `anchor`, and a
-rectangle with `corners` always carries its `radius` (HA would otherwise round
-with 10 px).
+**Content / Position / Style / Advanced**.
 
 ### Home Assistant templates
 
 Any text or number field accepts Jinja. Type `{{ states('sensor.temp') }}` into
-a value and Home Assistant evaluates it at render time: in number fields the
-expression is emitted bare (`"x": {{ 15 + i*spacing }}`), in text fields it
-stays inside the JSON string (`"value": "{{ states('sensor.temp') }} °C"`). A
-bare expression typed into a number field, such as `15 + i*spacing`, is wrapped
-in `{{ }}` for you. Fields containing `{{` or `{%` are tagged with a **jinja**
-badge.
+a value and it is emitted verbatim (unquoted) so Home Assistant evaluates it at
+render time. Fields containing `{{` or `{%` are tagged with a **jinja** badge.
 
 ### Variables
 
@@ -178,22 +159,13 @@ A **Repeat group** wraps its children in a `{% for %}` loop — this is how the
 
 1. Add a **Repeat group** from the palette (under *Structure*).
 2. Drag the elements that should repeat onto the canvas.
-3. Select the group and set the **loop variable** (`i`), **iterations** (`8`,
-   or a Jinja expression such as `forecast | length`) and any **pre-loop
-   statements** (e.g. `offsets = [offset_0, offset_1, ...]`).
+3. Select the group and set the **loop variable** (`i`), **iterations** (`8`)
+   and any **pre-loop statements** (e.g. `offsets = [offset_0, offset_1, ...]`).
 4. Use `i` in child fields: `{{ 15 + i*spacing }}`.
-
-Groups can be nested (drag a group onto another one in the **Layers** tab) to
-build nested loops, e.g. rows × columns; give each level its own loop variable.
-An **Enabled** checkbox turned off makes a group a plain folder that emits its
-children once.
 
 The generator handles comma placement so the output is always valid JSON: a
 group that is the first element emits `{% if not loop.first %},{% endif %}`
-instead of a leading comma, and a dynamic iteration count or nested groups
-switch to a runtime flag (`oepl_ns`). Anything the generator has to skip, or a
-nested group reusing its parent's loop variable, is listed as a warning above
-the output in the **Code** tab.
+instead of a leading comma.
 
 ### Exporting
 
@@ -202,93 +174,21 @@ The **Code** tab shows the live output as **Jinja**, **YAML** or **JSON**.
 puts it on the clipboard for pasting into a script, automation or template
 sensor.
 
-**✓ Validate** renders the template and checks the result, showing a green or
-red badge:
-
-* **green** — the template rendered and produced a valid array of elements, with
-  the element count and where the render happened;
-* **red** — with the stage that failed (*render*, *parse* or *elements*), the
-  error message, an excerpt with a caret under the offending character, and a
-  per-element list of problems such as `Element 2 (type 'line'): missing
-  required key 'x_end'`.
-
-Validation uses Home Assistant when it is reachable, so the check reflects live
-entity state. Otherwise it falls back to a local Jinja sandbox with permissive
-stubs: unresolved values render as `0`, which is enough to prove the template
-renders and that the payload is well formed. This also catches the one thing
-that cannot be checked statically — a quote that only appears at render time
-inside a `{{ }}` expression, which produces invalid JSON.
-
-### Pixel-accurate preview
-
-**🖼 Pixel preview** renders the project with the *real* drawing code and shows
-the result as a PNG — the same Pillow operations, fonts, colours, coordinate
-rules and defaults the integration uses when it draws to a tag.
-
-This is the honest counterpart to the canvas. The canvas is a fast
-approximation for editing; this is what the display will actually look like:
-
-* real `ppb.ttf` / `rbm.ttf` metrics, so text lands at the right width and wraps
-  where Home Assistant wraps it;
-* real Material Design Icons glyphs, resolved through the shipped MDI metadata;
-* the documented colour rules — `accent` follows the tag (switchable between red
-  and yellow in the dialog), `half_*` halftones, single-letter shortcuts, hex;
-* percentage coordinates, `y` auto-positioning, rotation and the 1-bit palette.
-
-The preview renders the template first, so `{{ states('sensor.x') }}` is
-resolved rather than drawn literally. **Zoom** scales the image with nearest
-neighbour so individual pixels stay visible, and **Checkerboard** puts it on a
-transparency grid — useful because an e-paper panel has no backlight.
-
-Anything the renderer cannot draw is reported instead of being silently
-dropped: per-element **errors** (a missing key, an unknown icon name) and
-**notes** for the two things that need a live Home Assistant — `plot` draws its
-frame and axes but no data, and `dlimg` shows a labelled placeholder instead of
-downloading a remote image.
-
-**Fonts** are not committed. `backend/scripts/fetch_assets.py` downloads them
-and verifies each file against a pinned size *and* git blob SHA-1, so a moved
-tag or a tampered mirror fails the build rather than shipping wrong glyphs. The
-Docker build runs it automatically; for a local checkout run it once:
-
-```bash
-cd backend
-python scripts/fetch_assets.py          # download what is missing
-python scripts/fetch_assets.py --check  # verify only
-```
-
 ### Sending to a display
 
-**📤 Send to display** renders the template and calls the configured Home
-Assistant service (default `open_epaper_link.drawcustom`):
+**📤 Send to display** calls the configured Home Assistant service (default
+`open_epaper_link.drawcustom`) with the rendered template as `payload`:
 
 ```yaml
 service: open_epaper_link.drawcustom
 data:
   device_id: "0011223344556677"
-  payload:
-    - type: text
-      value: "21.5 °C"
-      x: 40
-      y: 46
-      size: 22
+  payload: "{{ <generated template> }}"
   background: white
-  rotate: 0
-  dither: 2
-  ttl: 60
 ```
 
-The template is rendered through Home Assistant first (`POST /api/template`)
-and the resulting **list** is sent as `payload`. This matters: the integration
-reads `payload` as a finished list of elements and never renders Jinja itself,
-and `/api/services` does not render templates inside `data` either — so sending
-the raw template would reach the tag unrendered and fail. If the template does
-not render to a valid payload, nothing is sent and the error is reported.
-
-**Rotate**, **Dither** (0 none, 1 Floyd-Steinberg, 2 ordered) and **TTL** are
-set in the *Send to display* dialog and saved with the project. Enable
-**Dry run** to have Home Assistant render the image without pushing it to the
-tag.
+Enable **Dry run** to have Home Assistant render the image without pushing it to
+the tag.
 
 ---
 
@@ -302,29 +202,13 @@ tag.
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── scripts/
-│   │   └── fetch_assets.py     # download + verify preview fonts
 │   └── app/
 │       ├── main.py             # FastAPI app + static hosting
 │       ├── schema.py           # single source of truth for element types
 │       ├── generator.py        # visual model -> Jinja / YAML / JSON
-│       ├── templating.py       # render + validate the generated template
 │       ├── storage.py          # JSON-file project storage
 │       ├── ha_client.py        # Home Assistant REST client
-│       ├── render/             # pixel-accurate PNG renderer
-│       │   ├── renderer.py     #   entry point + dispatch
-│       │   ├── colors.py       #   drawcustom palette
-│       │   ├── coordinates.py  #   pixels and percentages
-│       │   ├── fonts.py        #   font + MDI metadata loading
-│       │   ├── text.py         #   text, multiline, markup
-│       │   ├── shapes.py       #   line, rect, polygon, circle, arc
-│       │   ├── icons.py        #   icon, icon_sequence
-│       │   ├── media.py        #   qrcode, dlimg
-│       │   └── visualizations.py # progress_bar, plot
-│       ├── test_generator.py   # generator tests
-│       ├── test_templating.py  # render / validation tests
-│       ├── test_render.py      # preview renderer tests
-│       └── test_api.py         # HTTP / security tests
+│       └── test_generator.py   # generator tests
 └── frontend/
     ├── index.html
     ├── css/styles.css
@@ -334,7 +218,6 @@ tag.
         ├── state.js            # state store + node helpers
         ├── canvas.js           # drag & drop, move, resize
         ├── geometry.js         # bounding boxes per element type
-        ├── theme.js            # colors + glyphs shared by the UI
         ├── renderer.js         # on-canvas previews
         ├── inspector.js        # schema-driven property editor
         ├── layers.js           # layer tree
@@ -354,10 +237,8 @@ and the generator. Adding a new draw type means adding one entry there.
 
 * Required properties are always emitted.
 * Optional properties are emitted only when they differ from the documented
-  default — so the output stays as short as a hand-written template. Properties
-  whose Home Assistant default is dynamic (a line's `y_end`, a plot's box,
-  `multiline.y`, …) are always emitted, so the display matches the canvas.
-* Jinja in number fields is emitted bare, in text fields inside the string.
+  default — so the output stays as short as a hand-written template.
+* Values containing `{{` / `{%` are emitted unquoted so Jinja evaluates them.
 * Properties whose documented default is `null` are omitted unless explicitly
   set.
 
@@ -368,36 +249,12 @@ and the generator. Adding a new draw type means adding one entry there.
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-python -m pytest -q app
-ruff check app
+python -m app.test_generator
 ```
 
-`test_generator` renders generated templates with a real Jinja environment and
-asserts the result is valid JSON — covering the weather example, repeat-group
-comma placement, hidden elements, quoting, percentages and dynamic defaults.
-`test_templating` covers the render sandbox (permissive stubs, sandbox escapes,
-error reporting) and each validation stage, including the caret position in the
-error excerpt. `test_render` checks the preview renderer by inspecting pixels:
-colour resolution, coordinate parsing, rotation, per-element error handling and
-that one broken element does not stop the rest from drawing. `test_api` covers
-the HTTP layer: path traversal, host check, project ids, token handling and that
-*Send to display* renders before sending.
-
-The preview tests skip automatically when the fonts have not been fetched; run
-`python scripts/fetch_assets.py` first to include them.
-
-### CI
-
-`.github/workflows/ci.yml` runs four jobs on every push and pull request:
-
-| Job | What it checks |
-| --- | --- |
-| Backend | `ruff check app` and `python -m pytest -q app` |
-| Frontend | `node --check` on every module, plus that each relative import resolves to a file that exists |
-| Docker | the image builds (nothing is pushed) |
-
-Lint is pinned by `backend/ruff.toml` so a new ruff release cannot turn CI red
-for reasons unrelated to a change.
+The suite renders generated templates with a real Jinja environment and asserts
+the result is valid JSON — covering the weather example, groups in first
+position, hidden elements, numeric types and shapes.
 
 ---
 
@@ -413,8 +270,6 @@ for reasons unrelated to a change.
 | `PUT` | `/api/projects/{id}` | Update a project |
 | `DELETE` | `/api/projects/{id}` | Delete a project |
 | `POST` | `/api/generate/template` | Generate Jinja / YAML / JSON |
-| `POST` | `/api/validate` | Render the template and check the payload |
-| `POST` | `/api/preview` | Render a pixel-accurate PNG preview |
 | `GET` | `/api/settings` | Read settings (token redacted) |
 | `POST` | `/api/settings` | Save settings |
 | `GET` | `/api/ha/status` | Test the Home Assistant connection |
@@ -429,19 +284,12 @@ Interactive docs are available at `/docs`.
 
 * Projects are stored as JSON files in the `epaper-gui-data` volume. Back it up
   if you care about the layouts.
-* The canvas is a **design-time approximation**. For the real thing use
-  **🖼 Pixel preview**, which renders with the actual drawing code, or
-  **Send to display → Dry run** to have Home Assistant produce the image.
-* The pixel preview cannot fetch live data: a `plot` renders its frame but no
-  series, and a `dlimg` with a remote URL renders a placeholder. Both are
-  reported as notes above the image.
-* Icons in the *editor* use the MDI webfont from a CDN. Offline, elements fall
-  back to a labelled placeholder — the generated payload and the pixel preview
-  are unaffected.
+* The canvas is a **design-time approximation**. Home Assistant and Pillow do
+  the real rendering, so exact font metrics and icon glyphs can differ slightly.
+  Use **Send to display → Dry run** to check the true result.
+* Icons in the editor use the MDI webfont from a CDN. Offline, elements fall
+  back to a labelled placeholder — the generated payload is unaffected.
 * The QR preview is a placeholder; the real code is generated by Home Assistant.
-* *Validation* falls back to a local sandbox when Home Assistant is unreachable.
-  Unresolved values render as `0`, so the check proves the template renders and
-  the payload is well formed — it does not confirm the values are meaningful.
 
 ## Security
 
@@ -450,16 +298,6 @@ a Home Assistant long-lived token and can push to your displays, so treat it as
 a trusted-network tool: bind it to your LAN or put it behind a reverse proxy
 with auth, and do not expose the port to the internet.
 
-Built-in guard rails:
-
-* Cross-origin requests are rejected by default. Only set `CORS_ORIGINS` if you
-  serve the frontend from a different host or port, and list exact origins —
-  without authentication, any allowed origin can act on your behalf.
-* Requests whose `Host` header is not an IP address, `localhost`, a dot-less
-  name, a LAN suffix (`.local`, `.lan`, `.home.arpa`, …) or listed in
-  `ALLOWED_HOSTS` are rejected. This blocks DNS rebinding; behind a reverse
-  proxy with its own domain, add that domain to `ALLOWED_HOSTS`.
-* The token is only ever sent to the URL it was configured for (see
-  *Configuration*), so pointing the editor at another server does not leak it.
-* *Send to display* can only call services in `ALLOWED_SERVICE_DOMAINS`
-  (default `open_epaper_link`).
+Cross-origin requests are rejected by default. Only set `CORS_ORIGINS` if you
+serve the frontend from a different host or port, and list exact origins —
+without authentication, any allowed origin can act on your behalf.

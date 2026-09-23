@@ -3,7 +3,6 @@
 import { state, setState, findNode, findParent, removeNode, typeSpec } from './state.js';
 import { render } from './canvas.js';
 import { elementLabel } from './renderer.js';
-import { glyphFor } from './theme.js';
 
 let container;
 
@@ -62,7 +61,6 @@ function buildLayer(node, siblings) {
     const vis = document.createElement('button');
     vis.className = 'btn-icon';
     vis.title = 'Toggle visibility';
-    vis.setAttribute('aria-label', vis.title);
     vis.textContent = node.props?.visible === false ? '🚫' : '👁';
     vis.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -77,7 +75,6 @@ function buildLayer(node, siblings) {
   const up = document.createElement('button');
   up.className = 'btn-icon';
   up.title = 'Bring forward';
-  up.setAttribute('aria-label', up.title);
   up.textContent = '▲';
   up.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -87,7 +84,6 @@ function buildLayer(node, siblings) {
   const down = document.createElement('button');
   down.className = 'btn-icon';
   down.title = 'Send backward';
-  down.setAttribute('aria-label', down.title);
   down.textContent = '▼';
   down.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -97,7 +93,6 @@ function buildLayer(node, siblings) {
   const del = document.createElement('button');
   del.className = 'btn-icon';
   del.title = 'Delete';
-  del.setAttribute('aria-label', del.title);
   del.textContent = '✕';
   del.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -139,8 +134,9 @@ function buildLayer(node, siblings) {
   }
 
   row.addEventListener('click', () => {
-    // 'structure' so the Inspector picks up the new selection too.
-    setState({ selection: node.id }, 'structure');
+    setState({ selection: node.id });
+    render();
+    renderLayers();
   });
   wrap.appendChild(row);
 
@@ -179,7 +175,7 @@ function reparent(nodeId, targetId) {
   const target = targetId ? findNode(targetId) : null;
   if (target) {
     if (target.kind !== 'group') return;
-    // Reject cycles (a group dropped into itself or its descendants).
+    // Reject cycles.
     let cursor = target;
     while (cursor) {
       if (cursor.id === nodeId) return;
@@ -201,5 +197,12 @@ function reparent(nodeId, targetId) {
 }
 
 function iconFor(type) {
-  return glyphFor(type, typeSpec(type));
+  const spec = typeSpec(type);
+  const map = {
+    text: 'T', multiline: '≡', icon: '★', icon_sequence: '⋯', qrcode: '▦',
+    dlimg: '🖼', line: '─', rectangle: '▭', rectangle_pattern: '▦',
+    polygon: '⬟', circle: '○', ellipse: '⬭', arc: '◔',
+    progress_bar: '▰', plot: '📈', debug_grid: '▩',
+  };
+  return map[type] || spec?.label?.[0] || '?';
 }

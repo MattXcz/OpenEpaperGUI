@@ -3,4 +3,4 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./frontend:/app/frontend
-    command: ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level \"${LOG_LEVEL:-info}\""]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
