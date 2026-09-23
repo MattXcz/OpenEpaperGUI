@@ -23,12 +23,22 @@ FRONTEND_DIR = Path(
 
 app = FastAPI(title="OpenEPaper GUI", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# The backend serves the frontend, so no cross-origin access is needed by
+# default. The app has no authentication, and a wildcard here would let any
+# page the user happens to visit read their projects and push to their
+# displays. Only set CORS_ORIGINS if you host the frontend separately.
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -218,17 +228,16 @@ if FRONTEND_DIR.exists():
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
         return response
 
+    # Every asset is referenced as /static/..., and there is no client-side
+    # router, so a catch-all fallback is not needed. It used to be one, and it
+    # joined the request path onto FRONTEND_DIR without checking where the
+    # result landed: `GET /..%2f..%2fdata%2fsettings.json` read the saved
+    # Home Assistant token straight off disk. StaticFiles does that check for
+    # us, so unknown paths now correctly 404.
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
     @app.get("/")
     async def index() -> FileResponse:
-        return FileResponse(str(FRONTEND_DIR / "index.html"))
-
-    @app.get("/{path:path}")
-    async def spa(path: str) -> FileResponse:
-        candidate = FRONTEND_DIR / path
-        if candidate.is_file():
-            return FileResponse(str(candidate))
         return FileResponse(str(FRONTEND_DIR / "index.html"))
 else:  # pragma: no cover
     @app.get("/")

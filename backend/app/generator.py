@@ -28,19 +28,33 @@ drawing elements, e.g.::
 Comma handling
 --------------
 Every emitted item is prefixed with a comma unless it is the very first item of
-the whole payload. A repeat group is a single logical item that expands to N
-items, so inside the loop body each iteration is prefixed with a comma (or with
-``{% if not loop.first %},{% endif %}`` when the group is the first item).
+the whole payload. A repeat group expands to N items, so inside the loop body
+each item is prefixed with a comma -- or with ``{% if not loop.first %},{% endif %}``
+when the group itself is the first item of the payload.
+
+That only works while we know, before rendering, how many items each node
+produces. Nodes that emit nothing (hidden elements, empty or zero-iteration
+groups) are dropped up front so they cannot leave a dangling comma behind. When
+an iteration count is itself a Jinja expression the item count is unknowable
+here, so the template falls back to a runtime flag
+(``{% set ns = namespace(first=true) %}``) that every item checks and clears.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .schema import ELEMENT_TYPES_BY_NAME, INTERNAL_FIELDS, REQUIRED_FIELDS
 
 INDENT = "  "
+
+_INTEGER_RE = re.compile(r"-?\d+")
+_NUMERIC_RE = re.compile(r"-?\d+(?:\.\d+)?")
+_WHOLE_TAG_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}", re.S)
+# Splits a string into literal chunks and whole Jinja tags (odd indexes).
+_JINJA_SEGMENT_RE = re.compile(r"(\{\{.*?\}\}|\{%.*?%\})", re.S)
 
 
 # ---------------------------------------------------------------------------
@@ -60,16 +74,33 @@ def _fmt_number(value: Any) -> str:
         if value.is_integer():
             return str(int(value))
         return repr(value)
-    # A string in a numeric slot is treated as a Jinja expression.
-    return str(value)
+
+    text = str(value).strip()
+    if not text:
+        # Nothing to emit. `_fmt_value` filters these out first; this only
+        # guards hand-crafted point / plot lists.
+        return "null"
+    if _is_template(text):
+        return text
+    if _NUMERIC_RE.fullmatch(text):
+        # A numeric string, e.g. "42" typed into a number field.
+        return text
+    # A bare expression such as `spacing` or `15 + i*spacing`. Wrapping it is
+    # what the user meant; emitting it raw would produce invalid JSON.
+    return "{{ " + text + " }}"
 
 
 def _fmt_string(value: str) -> str:
-    if _is_template(value):
-        # Keep the template intact; only escape backslashes and newlines.
-        escaped = value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "")
-        return f'"{escaped}"'
-    return json.dumps(value, ensure_ascii=False)
+    if not _is_template(value):
+        return json.dumps(value, ensure_ascii=False)
+
+    # Escape the literal chunks so the surrounding JSON string stays valid, but
+    # leave the Jinja tags byte-for-byte alone: escaping a quote inside
+    # `{{ … }}` would break the expression itself.
+    chunks = []
+    for index, part in enumerate(_JINJA_SEGMENT_RE.split(value)):
+        chunks.append(part if index % 2 else json.dumps(part, ensure_ascii=False)[1:-1])
+    return '"' + "".join(chunks) + '"'
 
 
 def _fmt_points(points: Any) -> str:
@@ -117,7 +148,7 @@ def _fmt_value(field: dict, value: Any) -> str | None:
         return "true" if value else "false"
 
     if kind == "number":
-        if value is None or value == "":
+        if value is None or (isinstance(value, str) and not value.strip()):
             return None
         return _fmt_number(value)
 
@@ -217,30 +248,99 @@ def _indent_block(lines: list[str], extra: str) -> list[str]:
 # Node emission
 # ---------------------------------------------------------------------------
 
-def _emit_element(element: dict, first: bool, indent: str) -> list[str]:
+# Comma placement is decided statically whenever we know how many payload items
+# every node produces. A Jinja-driven iteration count breaks that, so the
+# template then switches to a runtime flag for the whole payload instead.
+GUARD_INIT = "{% set ns = namespace(first=true) %}"
+GUARD_PREFIX = "{% if not ns.first %},{% endif %}{% set ns.first = false %}"
+
+# First item of the payload, emitted inside a loop: comma from iteration 2 on.
+LOOP_FIRST_PREFIX = "{% if not loop.first %},{% endif %}"
+
+
+def _static_count(count: Any) -> int | None:
+    """Iteration count when it is a plain integer, else None (Jinja decides)."""
+    if isinstance(count, bool):
+        return None
+    if isinstance(count, int):
+        return count
+    if isinstance(count, float) and count.is_integer():
+        return int(count)
+    if isinstance(count, str) and _INTEGER_RE.fullmatch(count.strip()):
+        return int(count.strip())
+    return None
+
+
+def _count_expr(count: Any) -> str:
+    """The expression that goes inside `range(...)`."""
+    static = _static_count(count)
+    if static is not None:
+        return str(max(0, static))
+    # A Jinja-valued count: `{{ n }}` has to become a bare `n` inside the tag.
+    text = str(count).strip()
+    match = _WHOLE_TAG_RE.fullmatch(text)
+    return match.group(1) if match else text
+
+
+def _emittable(children: list) -> list:
+    return [child for child in children if _element_lines(child, INDENT)]
+
+
+def _node_item_count(node: dict) -> int | None:
+    """How many payload items a node produces, or None when only Jinja knows."""
+    if node.get("kind") != "group":
+        return 1 if _element_lines(node, INDENT) else 0
+
+    children = _emittable(node.get("children") or [])
+    if not children:
+        return 0
+
+    repeat = node.get("repeat") or {}
+    if not repeat.get("enabled", True):
+        return len(children)
+
+    count = _static_count(repeat.get("count", 1))
+    if count is None:
+        return None
+    return max(0, count) * len(children)
+
+
+def _prefix(first: bool, seen: bool, guard: bool, in_loop: bool) -> str:
+    """Separator emitted in front of one payload item.
+
+    `first` is True while nothing has been emitted before this node, `seen`
+    while nothing has been emitted inside it yet.
+    """
+    if guard:
+        return GUARD_PREFIX
+    if not first or seen:
+        return ","
+    return LOOP_FIRST_PREFIX if in_loop else ""
+
+
+def _emit_element(element: dict, prefix: str, indent: str) -> list[str]:
     body = _element_lines(element, indent)
     if not body:
         return []
-    if not first:
-        body[0] = indent + "," + body[0].lstrip()
+    if prefix:
+        body[0] = indent + prefix + body[0].lstrip()
     return body
 
 
-def _emit_group(group: dict, first: bool, indent: str) -> list[str]:
-    repeat = group.get("repeat") or {}
+def _emit_group(group: dict, first: bool, indent: str, guard: bool) -> list[str]:
     children = group.get("children") or []
-    if not children:
-        return []
+    repeat = group.get("repeat") or {}
 
-    var = repeat.get("var") or "i"
-    count = repeat.get("count", 1)
-    enabled = repeat.get("enabled", True)
-
-    if not enabled:
-        # Emit children once, as plain elements.
+    if not repeat.get("enabled", True):
+        # Emit the children once, as plain elements.
         out: list[str] = []
+        seen = False
         for child in children:
-            out.extend(_emit_element(child, first and not out, indent))
+            block = _emit_element(child, _prefix(first, seen, guard, False), indent)
+            if not block:
+                continue
+            seen = True
+            out.extend(block)
         return out
 
     lines: list[str] = []
@@ -254,34 +354,29 @@ def _emit_group(group: dict, first: bool, indent: str) -> list[str]:
             statement = "{% set " + statement + " %}"
         lines.append(indent + statement)
 
-    lines.append(indent + "{% for " + var + " in range(" + str(count) + ") %}")
+    var = repeat.get("var") or "i"
+    count = _count_expr(repeat.get("count", 1))
+    lines.append(indent + "{% for " + var + " in range(" + count + ") %}")
 
     body_indent = indent + INDENT
-    for index, child in enumerate(children):
-        child_lines = _element_lines(child, body_indent)
-        if not child_lines:
+    seen = False
+    for child in children:
+        # A child that emits nothing (hidden, unknown type) must not consume
+        # the "no comma yet" slot, or the next one emits a stray comma.
+        block = _emit_element(child, _prefix(first, seen, guard, True), body_indent)
+        if not block:
             continue
-        if index == 0:
-            if first:
-                # First item of the payload: only add a comma from iteration 2 on.
-                child_lines[0] = (
-                    body_indent + "{% if not loop.first %},{% endif %}"
-                    + child_lines[0].lstrip()
-                )
-            else:
-                child_lines[0] = body_indent + "," + child_lines[0].lstrip()
-        else:
-            child_lines[0] = body_indent + "," + child_lines[0].lstrip()
-        lines.extend(child_lines)
+        seen = True
+        lines.extend(block)
 
     lines.append(indent + "{% endfor %}")
     return lines
 
 
-def _emit_node(node: dict, first: bool, indent: str) -> list[str]:
+def _emit_node(node: dict, first: bool, indent: str, guard: bool) -> list[str]:
     if node.get("kind") == "group":
-        return _emit_group(node, first, indent)
-    return _emit_element(node, first, indent)
+        return _emit_group(node, first, indent, guard)
+    return _emit_element(node, _prefix(first, False, guard, False), indent)
 
 
 # ---------------------------------------------------------------------------
@@ -304,14 +399,23 @@ def generate_template(project: dict) -> str:
             continue
         lines.append("{% set " + name + " = " + str(value).strip() + " %}")
 
+    counts = [_node_item_count(node) for node in nodes]
+    # One unknown count anywhere makes static comma placement unsafe, because a
+    # node that emits nothing at render time would leave a dangling comma.
+    guard = any(count is None for count in counts)
+    if guard:
+        lines.append(GUARD_INIT)
+
     if lines:
         lines.append("")
 
     lines.append("[")
 
     emitted_any = False
-    for node in nodes:
-        block = _emit_node(node, not emitted_any, INDENT)
+    for node, count in zip(nodes, counts):
+        if count == 0:
+            continue  # emits nothing, so it must not affect comma placement
+        block = _emit_node(node, not emitted_any, INDENT, guard)
         if not block:
             continue
         emitted_any = True
