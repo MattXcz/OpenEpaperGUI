@@ -108,7 +108,8 @@ function placeElementAt(element, point) {
   }
   if (g.kind === 'box') {
     const w = Math.abs((Number(p[g.x_end]) || 0) - (Number(p[g.x_start]) || 0)) || 60;
-    const h = Math.abs((Number(p[g.y_end]) || 0) - (Number(p[g.y_start]) || 0)) || 30;
+    // A line's zero height is what makes it horizontal, not a missing size.
+    const h = Math.abs((Number(p[g.y_end]) || 0) - (Number(p[g.y_start]) || 0)) || (g.line ? 0 : 30);
     p[g.x_start] = x;
     p[g.y_start] = y;
     p[g.x_end] = x + w;

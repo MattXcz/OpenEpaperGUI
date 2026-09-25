@@ -559,6 +559,8 @@ DISPLAY_PRESETS = [
     {"label": "2.13\" BWR (250x122)", "width": 250, "height": 122},
     {"label": "2.13\" BWR (122x250)", "width": 122, "height": 250},
     {"label": "1.54\" BWR (200x200)", "width": 200, "height": 200},
+    {"label": "M3 2.6\" BWR (360x184)", "width": 360, "height": 184},
+    {"label": "M3 2.6\" BWR(184x360)", "width": 184, "height": 360},
     {"label": "4.2\" BWR (400x300)", "width": 400, "height": 300},
     {"label": "7.5\" BWR (800x480)", "width": 800, "height": 480},
     {"label": "Custom", "width": 296, "height": 128},
