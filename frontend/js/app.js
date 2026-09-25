@@ -14,7 +14,7 @@ import { initLayers, renderLayers } from './layers.js';
 import { initVariables, renderVariables } from './variables.js';
 import { initCode, scheduleGenerate } from './code.js';
 import {
-  openProjects, openSettings, openExport, openPush, toast, closeModal,
+  openProjects, openSettings, openExport, openImport, openPush, toast, closeModal,
 } from './modals.js';
 import { glyphFor } from './theme.js';
 
@@ -194,6 +194,7 @@ function wireToolbar() {
     openProjects((project) => loadProject(project));
   });
   document.getElementById('btn-settings').addEventListener('click', () => openSettings());
+  document.getElementById('btn-import').addEventListener('click', () => openImport(applyImport));
   document.getElementById('btn-export').addEventListener('click', () => openExport());
   document.getElementById('btn-push').addEventListener('click', () => openPush());
 
@@ -386,6 +387,46 @@ async function saveProject({ manual = false } = {}) {
     saveAgain = false;
     if (state.dirty) await saveProject();
   }
+}
+
+// Imported nodes come without ids; they get fresh ones and the schema defaults
+// for every property the pasted code left out (= the drawcustom default).
+function importedNode(node) {
+  if (node.kind === 'group') {
+    const group = createGroup((node.children || []).map(importedNode));
+    return { ...group, name: node.name || group.name, repeat: { ...group.repeat, ...node.repeat } };
+  }
+  return createElement(node.type, node.props);
+}
+
+function applyImport(result, replace) {
+  const project = state.project;
+  const nodes = result.nodes.map(importedNode);
+  if (replace) {
+    project.nodes = nodes;
+    project.variables = result.variables;
+  } else {
+    project.nodes.push(...nodes);
+    // A pasted variable replaces an existing one of the same name.
+    for (const variable of result.variables) {
+      const existing = project.variables.find((item) => item.name === variable.name);
+      if (existing) existing.value = variable.value;
+      else project.variables.push(variable);
+    }
+  }
+
+  const options = result.options || {};
+  if (typeof options.background === 'string') {
+    project.background = options.background;
+    document.getElementById('display-background').value = options.background;
+  }
+  if ([0, 90, 180, 270].includes(Number(options.rotate))) project.rotate = Number(options.rotate);
+  if ([0, 1, 2].includes(Number(options.dither))) project.dither = Number(options.dither);
+  if (Number.isInteger(Number(options.ttl)) && Number(options.ttl) >= 0) project.ttl = Number(options.ttl);
+
+  setState({ selection: null, dirty: true }, 'structure');
+  render();
+  renderVariables();
 }
 
 function loadProject(project) {

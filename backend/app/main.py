@@ -22,6 +22,7 @@ from .generator import (
     generate_yaml,
 )
 from .ha_client import HomeAssistantClient, HomeAssistantError
+from .importer import CodeImportError, import_code
 from .render import RenderError, assets_available, render_payload
 from .render.fonts import ASSETS_DIR
 from .schema import FONTS, default_props, public_schema
@@ -139,6 +140,10 @@ class PushRequest(BaseModel):
     dryRun: bool = False
 
 
+class ImportRequest(BaseModel):
+    code: str = Field(max_length=500_000)
+
+
 class PreviewRequest(BaseModel):
     """A preview request: either a project or an explicit payload.
 
@@ -246,6 +251,15 @@ async def generate_template_endpoint(project: Project) -> dict:
         "payload": generate_payload(data),
         "warnings": collect_warnings(data),
     }
+
+
+@app.post("/api/import")
+async def import_endpoint(request: ImportRequest) -> dict:
+    """Parse a pasted payload or template into editor nodes (see importer.py)."""
+    try:
+        return import_code(request.code)
+    except CodeImportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/validate")

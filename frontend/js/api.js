@@ -36,6 +36,10 @@ export const api = {
     method: 'POST', body: JSON.stringify(project),
   }),
 
+  importCode: (code) => request('/api/import', {
+    method: 'POST', body: JSON.stringify({ code }),
+  }),
+
   validate: (project) => request('/api/validate', {
     method: 'POST', body: JSON.stringify(project),
   }),

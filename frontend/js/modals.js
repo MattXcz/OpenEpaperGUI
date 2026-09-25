@@ -299,6 +299,64 @@ export function openExport() {
 }
 
 // ---------------------------------------------------------------------------
+// Import from code
+// ---------------------------------------------------------------------------
+
+/**
+ * Paste a JSON payload, service data or a Jinja template. `onImport` gets the
+ * parsed result and whether to replace the current elements.
+ */
+export function openImport(onImport) {
+  let area;
+  let replace;
+  let errorEl;
+
+  openModal('Import from code', (body) => {
+    body.innerHTML = `
+      <p class="muted small">Paste a <code>drawcustom</code> payload: a JSON list of elements,
+        service data with a <code>payload</code> key, or a Jinja template.
+        <code>{% set %}</code> becomes a variable and <code>{% for i in range(n) %}</code> a repeat group.</p>
+      <textarea id="import-code" class="input" rows="14" spellcheck="false"
+        placeholder='[{"type": "text", "value": "Hello", "x": 10, "y": 10, "size": 20}]'></textarea>
+      <label class="checkbox-row" style="margin-top:10px;"><input id="import-replace" type="checkbox" /> Replace current elements and variables</label>
+      <div id="import-error" class="code-status is-error" role="alert" style="margin-top:10px;" hidden></div>
+    `;
+    area = body.querySelector('#import-code');
+    replace = body.querySelector('#import-replace');
+    errorEl = body.querySelector('#import-error');
+    setTimeout(() => area.focus(), 0);
+  }, (foot) => {
+    const cancel = document.createElement('button');
+    cancel.className = 'btn btn-ghost';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', closeModal);
+
+    const submit = document.createElement('button');
+    submit.className = 'btn btn-primary';
+    submit.textContent = 'Import';
+    submit.addEventListener('click', async () => {
+      submit.disabled = true;
+      errorEl.hidden = true;
+      try {
+        const result = await api.importCode(area.value);
+        onImport(result, replace.checked);
+        closeModal();
+        const count = result.nodes.length;
+        toast(`Imported ${count} item${count === 1 ? '' : 's'}`, 'success');
+        for (const warning of result.warnings) toast(warning);
+      } catch (error) {
+        errorEl.textContent = `✕ ${error.message}`;
+        errorEl.hidden = false;
+      } finally {
+        submit.disabled = false;
+      }
+    });
+
+    foot.append(cancel, submit);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Pixel-accurate preview
 // ---------------------------------------------------------------------------
 
