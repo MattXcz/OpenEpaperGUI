@@ -370,10 +370,15 @@ function resolveSwatch(value) {
 function selectInput(value, field, setValue) {
   const select = document.createElement('select');
   select.className = 'input';
-  for (const option of field.options || []) {
+  const options = [...(field.options || [])];
+  // An imported value outside the list (e.g. a font installed on the HA side)
+  // must stay visible instead of showing up as an empty select.
+  const custom = value != null && value !== '' && !options.includes(value);
+  if (custom) options.push(value);
+  for (const option of options) {
     const opt = document.createElement('option');
     opt.value = option;
-    opt.textContent = option;
+    opt.textContent = custom && option === value ? `${option} (custom)` : option;
     select.appendChild(opt);
   }
   select.value = value ?? field.default ?? '';

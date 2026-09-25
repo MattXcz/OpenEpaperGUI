@@ -3,7 +3,9 @@
 Accepts what people actually have lying around:
 
 * a plain JSON payload (``[{"type": "text", ...}, ...]``), e.g. from "Copy JSON"
-* JSON service data with a ``payload`` key, optionally nested under ``data``
+* the same as YAML, as Home Assistant shows it in scripts and automations
+* JSON or YAML service data with a ``payload`` key, optionally nested under
+  ``data``; the payload itself may be a list or a template string
 * a Jinja template as produced by the generator (or written by hand in the
   same shape): ``{% set %}`` before the payload become project variables,
   ``{% for v in range(n) %}`` loops become repeat groups, and ``{{ … }}``
@@ -17,9 +19,12 @@ generator would drop them silently on the next export.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from typing import Any
+
+import yaml
 
 from .schema import ELEMENT_TYPES_BY_NAME
 
@@ -48,29 +53,42 @@ def import_code(code: str) -> dict:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        nodes, variables = _parse_template(text, warnings)
-        return {"nodes": nodes, "variables": variables, "options": {}, "warnings": warnings}
+        # A template is JSON with tags in it, so it starts like JSON or with a
+        # tag; anything else is YAML (`- type: text` or `payload:`).
+        data = text if text[0] in "[{" else _load_yaml(text)
 
     payload, options = _unwrap(data)
-    nodes = [node for node in (_element(item, warnings) for item in payload) if node]
-    return {"nodes": nodes, "variables": [], "options": options, "warnings": warnings}
+    if isinstance(payload, str):
+        nodes, variables = _parse_template(payload.strip(), warnings)
+    else:
+        nodes = [node for node in (_element(item, warnings) for item in payload) if node]
+        variables = []
+    return {"nodes": nodes, "variables": variables, "options": options, "warnings": warnings}
 
 
-def _unwrap(data: Any) -> tuple[list, dict]:
-    """The element list and service options of a JSON document."""
-    if isinstance(data, list):
+def _load_yaml(text: str) -> Any:
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        where = f" (line {mark.line + 1})" if mark else ""
+        problem = getattr(exc, "problem", None) or "invalid syntax"
+        raise CodeImportError(f"Not valid JSON, YAML or a template: {problem}{where}.") from exc
+
+
+def _unwrap(data: Any) -> tuple[list | str, dict]:
+    """The payload (element list or template text) and service options."""
+    if isinstance(data, (list, str)):
         return data, {}
     if isinstance(data, dict):
         if isinstance(data.get("data"), dict):
             data = data["data"]
         payload = data.get("payload")
         if isinstance(payload, str):
-            # Service data can carry the payload as a JSON-encoded string.
-            try:
+            # Service data can carry the payload as JSON text or as a template.
+            with contextlib.suppress(json.JSONDecodeError):
                 payload = json.loads(payload)
-            except json.JSONDecodeError as exc:
-                raise CodeImportError(f"`payload` is not valid JSON: {exc.msg}") from exc
-        if isinstance(payload, list):
+        if isinstance(payload, (list, str)):
             options = {key: data[key] for key in SERVICE_OPTIONS if key in data}
             return payload, options
         if "type" in data:

@@ -44,6 +44,41 @@ def test_payload_as_json_string() -> None:
     assert len(import_code(code)["nodes"]) == 1
 
 
+def test_yaml_payload() -> None:
+    code = """
+- type: dlimg
+  url: '{{url_img}}'
+  x: 250
+  'y': 8
+  xsize: 100
+  ysize: 50
+- type: text
+  value: Aktualně
+  x: 50%
+  'y': 10%
+  anchor: mm
+"""
+    result = import_code(code)
+    assert [node["type"] for node in result["nodes"]] == ["dlimg", "text"]
+    assert result["nodes"][0]["props"]["url"] == "{{url_img}}"
+    assert result["nodes"][1]["props"]["y"] == "10%"
+
+
+def test_yaml_service_call_with_template_payload() -> None:
+    code = """
+action: open_epaper_link.drawcustom
+data:
+  background: white
+  payload: >
+    {% set gap = 20 %}
+    [{"type": "text", "value": "A", "x": {{ gap }}, "y": 0}]
+"""
+    result = import_code(code)
+    assert result["options"] == {"background": "white"}
+    assert result["variables"] == [{"name": "gap", "value": "20"}]
+    assert result["nodes"][0]["props"]["x"] == "{{ gap }}"
+
+
 def test_unknown_types_and_props_are_reported() -> None:
     code = json.dumps([
         {"type": "sparkle", "x": 1},
@@ -83,6 +118,7 @@ def test_variables_before_the_payload() -> None:
 @pytest.mark.parametrize("code", [
     "",
     "not json",
+    "- type: text\n  - broken: [",
     '[{% if x %}{"type": "text", "value": "A", "x": 0, "y": 0}{% endif %}]',
     '[{% for x in items %}{"type": "text", "value": "A", "x": 0, "y": 0}{% endfor %}]',
     '[{% for i in range(2) %}{"type": "text", "value": "A", "x": 0, "y": 0}]',
