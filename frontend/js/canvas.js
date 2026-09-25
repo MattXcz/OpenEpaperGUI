@@ -6,6 +6,7 @@ import {
 } from './state.js';
 import { boundsOf, applyBounds, snapValue, buildPreviewContext, resolveProps } from './geometry.js';
 import { renderElementContent, elementLabel } from './renderer.js';
+import { FONT_FAMILY_NAMES } from './theme.js';
 
 let canvasEl;
 let elementsEl;
@@ -20,6 +21,13 @@ export function initCanvas() {
   overlayEl = document.getElementById('canvas-overlay');
   gridEl = document.getElementById('canvas-grid');
   scrollEl = document.getElementById('canvas-scroll');
+
+  // Text boxes are measured with the display fonts; redraw once they arrive.
+  if (document.fonts) {
+    Promise.all(FONT_FAMILY_NAMES.map((family) => document.fonts.load(`16px "${family}"`)))
+      .then(() => render())
+      .catch(() => { /* keep the estimated widths */ });
+  }
 
   // Drop from the palette.
   canvasEl.addEventListener('dragover', (event) => {

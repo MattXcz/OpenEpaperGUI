@@ -2,7 +2,7 @@
 
 import { boundsOf } from './geometry.js';
 import { typeSpec } from './state.js';
-import { resolveColor } from './theme.js';
+import { fontFamily, resolveColor } from './theme.js';
 
 // The MDI webfont glyphs are optional; when it is missing we fall back to a
 // simple placeholder so the canvas still communicates the layout.
@@ -49,6 +49,14 @@ function stripColorMarkup(text) {
   return String(text ?? '').replace(/\[\/?[a-z_]+\]/gi, '');
 }
 
+// Endpoints of one line axis inside the 0..100 viewBox.
+function lineSpan(start, end) {
+  const a = parseFloat(start);
+  const b = parseFloat(end);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a === b) return [50, 50];
+  return a < b ? [0, 100] : [100, 0];
+}
+
 function iconName(value) {
   return String(value ?? '').replace(/^mdi:/, '');
 }
@@ -72,7 +80,9 @@ export function renderElementContent(node) {
       const size = Number(p.size) || 20;
       const weight = p.stroke_width ? 'bold' : 'normal';
       const align = ['left', 'center', 'right'].includes(p.align) ? p.align : 'left';
-      return `<div class="el-text" style="font-size:${size}px;color:${color};font-weight:${weight};white-space:pre-wrap;text-align:${align};">${escapeHtml(text)}</div>`;
+      // `pre`, not `pre-wrap`: the box is measured, not a wrapping width, and
+      // HA only wraps when `max_width` is set.
+      return `<div class="el-text" style="font-family:'${fontFamily(p.font)}';font-size:${size}px;color:${color};font-weight:${weight};text-align:${align};">${escapeHtml(text)}</div>`;
     }
 
     case 'multiline': {
@@ -90,7 +100,7 @@ export function renderElementContent(node) {
       const html = lines
         .map((line, index) => `<div style="position:absolute;top:${index * offset}px;left:0;right:0;white-space:pre;text-align:${align};">${escapeHtml(line)}</div>`)
         .join('');
-      return `<div class="el-text" style="font-size:${size}px;color:${color};position:relative;">${html}</div>`;
+      return `<div class="el-text" style="font-family:'${fontFamily(p.font)}';font-size:${size}px;color:${color};position:relative;">${html}</div>`;
     }
 
     case 'icon': {
@@ -138,8 +148,12 @@ export function renderElementContent(node) {
       const color = resolveColor(p.fill, '#000');
       const width = Number(p.width) || 1;
       const dashed = p.dashed ? `stroke-dasharray="${Number(p.dash_length) || 5} ${Number(p.space_length) || 3}"` : '';
+      // Draw from start to end as given: the box alone cannot tell a "\" from
+      // a "/", and a flat line gets a 1px box that must not turn it diagonal.
+      const [x1, x2] = lineSpan(p.x_start, p.x_end);
+      const [y1, y2] = lineSpan(p.y_start, p.y_end);
       return `<svg class="el-shape" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <line x1="0" y1="0" x2="100" y2="100" stroke="${color}" stroke-width="${width}" ${dashed} vector-effect="non-scaling-stroke" />
+        <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" ${dashed} vector-effect="non-scaling-stroke" />
       </svg>`;
     }
 

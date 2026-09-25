@@ -3,6 +3,7 @@
 import { state, setState, createProject } from './state.js';
 import { api } from './api.js';
 import { PRESETS } from './presets.js';
+import { copyText } from './clipboard.js';
 
 const root = () => document.getElementById('modal-root');
 
@@ -285,8 +286,12 @@ export function openExport() {
     copy.className = 'btn btn-primary';
     copy.textContent = 'Copy template';
     copy.addEventListener('click', async () => {
-      await navigator.clipboard.writeText(template);
-      toast('Template copied', 'success');
+      try {
+        await copyText(template);
+        toast('Template copied', 'success');
+      } catch {
+        toast('Copy failed — use Download instead', 'error');
+      }
     });
 
     foot.append(download, copy);

@@ -39,6 +39,21 @@ def test_path_traversal_is_blocked() -> None:
         assert client.get(url).status_code == 404, url
 
 
+def test_fonts_serve_only_schema_names() -> None:
+    client = _fresh()
+    for url in ("/api/fonts/..%2fmain.py", "/api/fonts/materialdesignicons-webfont_meta.json",
+                "/api/fonts/nope.ttf"):
+        assert client.get(url).status_code == 404, url
+
+
+@pytest.mark.skipif(not assets_available(), reason="font assets not fetched")
+def test_fonts_are_served() -> None:
+    response = _fresh().get("/api/fonts/rbm.ttf")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "font/ttf"
+    assert len(response.content) > 1000
+
+
 def test_rebinding_hosts_are_rejected() -> None:
     client = _fresh()
     ok = ["localhost:8099", "127.0.0.1:8099", "192.168.1.20", "[::1]:8099",

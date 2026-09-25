@@ -2,6 +2,7 @@
 // The box is what the canvas uses for hit-testing, dragging and resizing.
 
 import { state, typeSpec } from './state.js';
+import { fontFamily } from './theme.js';
 
 /**
  * Builds the variable context used to preview Jinja expressions.
@@ -163,11 +164,29 @@ function lineHeightOf(g) {
   return num(g?.line_height, 1.25);
 }
 
-function textSize(text, size, g) {
+// Measures with the real display font once it has loaded; until then (or
+// outside a browser) the schema's average character width is the estimate.
+let measureCtx = null;
+function measureWidth(line, size, font, g) {
+  if (measureCtx === null) {
+    measureCtx = typeof document !== 'undefined'
+      ? document.createElement('canvas').getContext('2d')
+      : false;
+  }
+  const family = fontFamily(font);
+  const css = `${size}px "${family}"`;
+  if (measureCtx && document.fonts?.check(css) !== false) {
+    measureCtx.font = css;
+    if (measureCtx.font.includes(family)) return measureCtx.measureText(line).width;
+  }
+  return line.length * size * charWidthOf(g);
+}
+
+function textSize(text, size, g, font) {
   const lines = String(text ?? '').split('\n');
-  const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
+  const longest = lines.reduce((max, line) => Math.max(max, measureWidth(line, size, font, g)), 0);
   return {
-    w: Math.max(4, longest * size * charWidthOf(g)),
+    w: Math.max(4, Math.ceil(longest)),
     h: Math.max(4, lines.length * size * lineHeightOf(g)),
   };
 }
@@ -220,7 +239,7 @@ export function boundsOf(node) {
       // text / multiline
       const size = num(p.size, 20);
       const lines = textLines(p, g);
-      const measured = textSize(lines.join('\n'), size, g);
+      const measured = textSize(lines.join('\n'), size, g, p.font);
       if (g.line_step) {
         const lineH = size * lineHeightOf(g);
         measured.h = (lines.length - 1) * num(p[g.line_step], 20) + lineH;
@@ -342,6 +361,22 @@ export function applyBounds(node, box, mode = 'move') {
     }
     const lineH = g.line_step ? num(p.size, 20) * lineHeightOf(g) : box.h;
     Object.assign(p, keyed(g, anchorPoint(p, box, lineH)));
+    return;
+  }
+
+  if (g.kind === 'box' && g.line) {
+    // A line keeps its direction, and a horizontal/vertical one stays flat:
+    // its box is padded to 1px, which must not be written back as a slope.
+    const x1 = cx(p[g.x_start]);
+    const x2 = cx(p[g.x_end]);
+    const y1 = cy(p[g.y_start]);
+    const y2 = cy(p[g.y_end]);
+    const w = x1 === x2 ? 0 : Math.round(box.w);
+    const h = y1 === y2 ? 0 : Math.round(box.h);
+    const left = Math.round(box.x);
+    const top = Math.round(box.y);
+    [p[g.x_start], p[g.x_end]] = x2 < x1 ? [left + w, left] : [left, left + w];
+    [p[g.y_start], p[g.y_end]] = y2 < y1 ? [top + h, top] : [top, top + h];
     return;
   }
 

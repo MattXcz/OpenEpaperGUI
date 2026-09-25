@@ -23,7 +23,8 @@ from .generator import (
 )
 from .ha_client import HomeAssistantClient, HomeAssistantError
 from .render import RenderError, assets_available, render_payload
-from .schema import default_props, public_schema
+from .render.fonts import ASSETS_DIR
+from .schema import FONTS, default_props, public_schema
 from .templating import payload_from_rendered, validate_project
 
 FRONTEND_DIR = Path(
@@ -163,6 +164,22 @@ async def health() -> dict:
 @app.get("/api/schema")
 async def schema() -> dict:
     return public_schema()
+
+
+@app.get("/api/fonts/{name}")
+async def font_file(name: str) -> FileResponse:
+    """The display fonts, so the canvas draws text in the real typeface.
+
+    Only the names in the schema are served; the path is never built from
+    arbitrary input.
+    """
+    if name not in FONTS or not (ASSETS_DIR / name).exists():
+        raise HTTPException(status_code=404, detail=f"Font {name!r} not available")
+    return FileResponse(
+        str(ASSETS_DIR / name),
+        media_type="font/ttf",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/api/schema/defaults/{element_type}")

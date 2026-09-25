@@ -2,6 +2,20 @@
 // layer list and the inspector. Keeping them in one place means a new color or
 // element type only has to be described once.
 
+/** drawcustom font file to the CSS family declared in styles.css. */
+const FONT_FAMILIES = {
+  'ppb.ttf': 'OEPL ppb',
+  'rbm.ttf': 'OEPL rbm',
+};
+
+/** CSS font-family for a drawcustom `font`; unknown files use the default. */
+export function fontFamily(font) {
+  return FONT_FAMILIES[font] || FONT_FAMILIES['ppb.ttf'];
+}
+
+/** Every family, so the canvas can wait for them before measuring text. */
+export const FONT_FAMILY_NAMES = Object.values(FONT_FAMILIES);
+
 /**
  * ESL color names to hex. `accent` maps to red because the canvas has to pick
  * one; the real tag decides at render time.

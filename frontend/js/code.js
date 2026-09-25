@@ -3,6 +3,7 @@
 import { state, setState } from './state.js';
 import { api } from './api.js';
 import { openPixelPreview } from './modals.js';
+import { copyText } from './clipboard.js';
 
 let output;
 let warningsEl;
@@ -33,13 +34,14 @@ export function initCode() {
       const text = mode === 'payload'
         ? JSON.stringify(state.generated.payload, null, 2)
         : state.generated[mode] || '';
+      const label = button.dataset.label || (button.dataset.label = button.textContent);
       try {
-        await navigator.clipboard.writeText(text);
+        await copyText(text);
         button.textContent = 'Copied!';
-        setTimeout(() => { button.textContent = `Copy ${mode === 'template' ? 'template' : mode.toUpperCase()}`; }, 1200);
       } catch {
         button.textContent = 'Copy failed';
       }
+      setTimeout(() => { button.textContent = label; }, 1200);
     });
   });
 
